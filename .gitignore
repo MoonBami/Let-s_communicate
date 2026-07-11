@@ -1,0 +1,29 @@
+# Node
+node_modules/
+dist/
+.vite/
+*.local
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Uploads / recordings (local dev)
+backend/uploads/

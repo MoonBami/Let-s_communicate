@@ -1,0 +1,19 @@
+{
+  "name": "sotonghaeyo",
+  "private": true,
+  "version": "0.0.1",
+  "description": "소통해요 — 교사 민원 보조 AI 시스템 (모노레포)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @sotong/web",
+    "build:web": "npm run build -w @sotong/web",
+    "typecheck": "npm run -ws --if-present typecheck",
+    "backend:dev": "cd backend && uvicorn app.main:app --reload --port 8000"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
