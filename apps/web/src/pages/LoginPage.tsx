@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { API, type AuthTokens, type User } from '@sotong/shared';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
@@ -61,6 +61,25 @@ export function LoginPage() {
         >
           로그인
         </button>
+
+        <p className="text-center text-sm text-slate-500">
+          계정이 없으신가요?{' '}
+          <Link to="/signup" className="text-brand hover:underline">
+            회원가입
+          </Link>
+        </p>
+
+        <div className="pt-3 border-t">
+          <Link
+            to="/complaint"
+            className="block w-full rounded-md border border-brand text-brand text-center py-2 text-sm font-medium hover:bg-brand/5"
+          >
+            학부모 민원 접수하기 →
+          </Link>
+          <p className="mt-1 text-center text-xs text-slate-400">
+            학부모는 로그인 없이 민원을 접수할 수 있습니다.
+          </p>
+        </div>
       </form>
     </div>
   );

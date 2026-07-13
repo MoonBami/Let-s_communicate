@@ -1,21 +1,28 @@
 import uuid
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import EmailStr, Field
+
+from app.schemas.base import CamelModel
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(CamelModel):
     email: EmailStr
     password: str
 
 
-class TokenOut(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class SignupRequest(CamelModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str = Field(min_length=1)
+    role: str = "teacher"  # teacher | admin (라우트에서 검증)
 
 
-class UserOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class TokenOut(CamelModel):
+    access_token: str  # → accessToken
+    token_type: str = "bearer"  # → tokenType
 
+
+class UserOut(CamelModel):
     id: uuid.UUID
     school_id: uuid.UUID | None
     role: str

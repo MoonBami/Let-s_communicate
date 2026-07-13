@@ -85,7 +85,8 @@ Let's_communicate/
 ├─ packages/
 │  └─ shared/         # 웹·앱 공용 타입 / ENUM / API 경로 (단일 소스)
 ├─ backend/           # FastAPI + SQLAlchemy + AI 서비스
-│  └─ app/services/ai # F1 분류 · F4 답변초안 (Claude + 규칙 fallback)
+│  ├─ app/services/ai # F1 분류 · F2 위험 · F3 욕설필터 · F4 답변초안 (Claude + 규칙 fallback)
+│  └─ seed.py         # 데모 계정·데이터 시드
 ├─ db/
 │  └─ schema.sql      # PostgreSQL 15+ / pgvector 스키마
 └─ docs/              # 기획·정리 문서
@@ -111,15 +112,23 @@ Let's_communicate/
 ## 🚀 시작하기
 
 ### 사전 준비
-- Node.js 20+
-- Python 3.11+
-- (선택) PostgreSQL 15+, Redis — DB 붙일 때
+- **Node.js 20+**
+- **Python 3.11 또는 3.12** (3.13/3.14는 핀 버전 휠 미제공으로 빌드 실패 가능 → 최신 버전 대체 설치 필요)
+- **Docker Desktop** — DB를 컨테이너로 띄운다. PostgreSQL을 직접 설치하지 않아도 됨.
 
-### 1) 프론트엔드 (웹)
+### 1) 데이터베이스 (Docker)
 ```bash
-npm install            # 루트에서 (workspaces 전체 설치)
-npm run dev:web        # → http://localhost:5173
+# Postgres 16 + pgvector 컨테이너
+docker run -d --name sotong-db \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=sotonghaeyo \
+  -p 5432:5432 pgvector/pgvector:pg16
+
+# 스키마 적용 (파일 복사 후 psql이 직접 읽게 — 파이프 인코딩 깨짐 방지)
+docker cp db/schema.sql sotong-db:/tmp/schema.sql
+docker exec sotong-db psql -U postgres -d sotonghaeyo -f /tmp/schema.sql
 ```
+> ⚠️ PowerShell에서 `Get-Content ... | docker exec psql`는 UTF-8 한글 주석이 깨져
+> 스키마가 일부 유실됩니다. 반드시 위처럼 `docker cp` + `psql -f`로 넣으세요.
 
 ### 2) 백엔드 (FastAPI)
 ```bash
@@ -128,14 +137,24 @@ python -m venv .venv
 # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 # bash:              source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # DB, ANTHROPIC_API_KEY 등 값 채우기
+cp .env.example .env      # 기본값이면 위 Docker DB에 그대로 연결됨
 uvicorn app.main:app --reload --port 8000   # → http://localhost:8000/docs
+python seed.py            # (별도 터미널) 데모 계정·데이터 시드
 ```
 > `/api` 요청은 Vite가 8000번으로 프록시하므로 개발 중 CORS 설정이 필요 없습니다.
 > `ANTHROPIC_API_KEY`가 없으면 AI가 **규칙 기반 fallback**으로 동작해 키 없이도 앱이 뜹니다.
 
-### 3) 데이터베이스
-`db/schema.sql`을 PostgreSQL 15+(pgvector 확장)에 적용. (운영 전환 시 Alembic 도입 권장)
+### 3) 프론트엔드 (웹)
+```bash
+npm install            # 루트에서 (workspaces 전체 설치)
+npm run dev:web        # → http://localhost:5173
+```
+
+### 4) 로그인 / 접속
+- 웹: http://localhost:5173
+- 데모 계정(비번 `demo1234`): `admin@demo.sotong` · `teacher@demo.sotong` · `parent@demo.sotong`
+- 로그인 화면에서 **회원가입**(교사·관리자) 또는 **학부모 민원 접수**(로그인 불필요)로 이동
+- 운영 전환 시 스키마 마이그레이션은 **Alembic** 도입 권장
 
 ---
 
@@ -173,6 +192,16 @@ uvicorn app.main:app --reload --port 8000   # → http://localhost:8000/docs
 
 ## 📊 현재 상태
 
-**뼈대(scaffold) 구성 완료** — 웹 빌드·타입체크 통과, 백엔드 문법 검증 통과.
-인증 실제 로직·전체 CRUD·AI 프롬프트 튜닝·나머지 ORM 모델은 각 `TODO` 지점부터 채우면 됩니다.
+**MVP + Phase 2 AI 코어 동작** — 로그인·회원가입·민원 접수·필터·라우팅이 엔드투엔드로 돌아갑니다.
+
+- ✅ **인증**: 회원가입/로그인(JWT), 데모 시드 계정
+- ✅ **F1 분류**: 접수 시 카테고리 자동 분류 → 단순 행정은 `auto_answered`
+- ✅ **F2 위험**: 감정·공격성 → 위험도(low~critical) 기록
+- ✅ **F3 욕설·위협 필터**: 결정론적 규칙 기반 차단 + 원문 증거 보관(교사 미노출)
+- ✅ **자동 라우팅**: `teacher_assignments` 기반 담당 교사 배정
+- ✅ **F4 답변 초안**, **F9 대시보드 집계** 엔드포인트
+- ✅ 프론트/백엔드 계약을 camelCase로 통일(`@sotong/shared`와 일치)
+
+**남은 것**: F5 RAG · F8 이관 · 역할별 권한 가드 · Celery 워커 (각 `TODO` 참고).
+AI는 `ANTHROPIC_API_KEY` 없이도 규칙 기반 fallback으로 동작합니다.
 백엔드 상세는 [`backend/README.md`](backend/README.md) 참고.

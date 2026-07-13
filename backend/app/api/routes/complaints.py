@@ -4,40 +4,103 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
 from app.models.user import User
-from app.schemas.complaint import ComplaintCreate, ComplaintOut, DraftOut, Paginated
-from app.services.ai import classify, draft_answer
+from app.schemas.complaint import (
+    ClassificationOut,
+    ComplaintCreate,
+    ComplaintDetail,
+    ComplaintOut,
+    DraftOut,
+    Paginated,
+    RiskOut,
+)
+from app.services.ai import analyze_risk, classify, draft_answer, filter_content, route_teacher
 
 router = APIRouter(prefix="/api/complaints", tags=["complaints"])
+
+# 위험도 순서 — 필터 심각도와 위험 분석 결과 중 높은 쪽을 채택할 때 사용.
+_RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def _max_risk(a: str, b: str) -> str:
+    return a if _RISK_ORDER.get(a, 0) >= _RISK_ORDER.get(b, 0) else b
 
 
 @router.post("", response_model=ComplaintOut, status_code=status.HTTP_201_CREATED)
 def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
-    """학부모 민원 접수 → F1 자동 분류 → 상태 결정(라우팅).
+    """학부모 민원 접수 → AI 게이트웨이 파이프라인.
 
-    실제로는 여기서 F2(위험) · F3(욕설 필터)도 파이프라인으로 태워야 함.
-    지금은 F1 분류만 연결한 최소 흐름.
+    F3(욕설·위협 필터) → F1(분류) → F2(위험) → 라우팅 순으로 태운 뒤 상태를 정한다.
+    - 욕설·위협 차단: 교사 미노출, 원문을 증거로 보관(status=filtered_blocked).
+    - 단순 행정: 챗봇 자동 응대 후보(status=auto_answered).
+    - 그 외 정당한 민원: 담당 교사 자동 배정(status=pending_teacher).
+    분류·위험 결과는 이력 테이블에 함께 남긴다.
     """
-    result = classify(payload.body)
+    body = payload.body
+
+    filter_result = filter_content(body)       # F3
+    classification = classify(body)            # F1
+    risk_result = analyze_risk(body)           # F2
 
     complaint = Complaint(
         school_id=payload.school_id,
         student_id=payload.student_id,
         channel=payload.channel,
         title=payload.title,
-        body=payload.body,
-        category=result.category,
+        body=body,
+        category=classification.category,
+        risk=risk_result.risk,
     )
 
-    # 단순 행정은 챗봇 자동 응대 후보, 그 외는 교사 확인 대기
-    if result.category == "administrative":
+    if filter_result.is_blocked:
+        # 위협성 → 차단 + 증거. 교사에게 넘기지 않는다.
+        complaint.status = "filtered_blocked"
+        complaint.filtered = True
+        complaint.risk = _max_risk(complaint.risk, filter_result.severity)
+    elif classification.category == "administrative":
+        # 단순 행정 → 챗봇 자동 응대 후보
         complaint.status = "auto_answered"
         complaint.is_auto_handled = True
     else:
+        # 정당한 민원 → 담당 교사 자동 배정
         complaint.status = "pending_teacher"
+        complaint.assigned_teacher_id = route_teacher(db, payload.student_id)
 
     db.add(complaint)
+    db.flush()  # complaint.id 확보 (자식 레코드 FK용)
+
+    db.add(
+        Classification(
+            complaint_id=complaint.id,
+            predicted=classification.category,
+            confidence=classification.confidence,
+            model_name=classification.model_name,
+            is_auto_routed=complaint.assigned_teacher_id is not None,
+        )
+    )
+    db.add(
+        RiskAnalysis(
+            complaint_id=complaint.id,
+            sentiment_score=risk_result.sentiment_score,
+            aggression_score=risk_result.aggression_score,
+            risk=risk_result.risk,
+            reasons=risk_result.reasons,
+            model_name=risk_result.model_name,
+        )
+    )
+    if filter_result.is_blocked:
+        db.add(
+            ContentFilterLog(
+                complaint_id=complaint.id,
+                is_blocked=True,
+                matched_terms=filter_result.matched_terms,
+                severity=filter_result.severity,
+                raw_evidence=body,  # 원문 증거 (접근 통제·암호화는 저장 계층 책임)
+            )
+        )
+
     db.commit()
     db.refresh(complaint)
     return complaint
@@ -63,6 +126,44 @@ def list_complaints(
     ).scalars().all()
 
     return Paginated(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/{complaint_id}", response_model=ComplaintDetail)
+def get_complaint(
+    complaint_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """민원 상세 — 최신 분류·위험 분석 포함.
+
+    차단된 민원(증거)은 admin·mdt 만 열람 가능. 교사에겐 노출되지 않는다.
+    """
+    complaint = db.get(Complaint, complaint_id)
+    if complaint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "민원을 찾을 수 없습니다.")
+
+    if complaint.filtered and current.role not in ("admin", "mdt"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "열람 권한이 없습니다.")
+
+    latest_cls = db.execute(
+        select(Classification)
+        .where(Classification.complaint_id == complaint.id)
+        .order_by(Classification.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    latest_risk = db.execute(
+        select(RiskAnalysis)
+        .where(RiskAnalysis.complaint_id == complaint.id)
+        .order_by(RiskAnalysis.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    detail = ComplaintDetail.model_validate(complaint)
+    if latest_cls is not None:
+        detail.classification = ClassificationOut.model_validate(latest_cls)
+    if latest_risk is not None:
+        detail.risk_analysis = RiskOut.model_validate(latest_risk)
+    return detail
 
 
 @router.post("/{complaint_id}/draft", response_model=DraftOut)

@@ -21,6 +21,13 @@ import { API, CATEGORY_LABEL, type Complaint } from '@sotong/shared';
 빌드 없이 소스(`src`)를 직접 참조합니다 (`main`/`types`가 `.ts`를 가리킴).
 Vite alias와 tsconfig paths로 연결되어 있어 별도 빌드 단계가 필요 없습니다.
 
+## 🐫 네이밍 규칙 (camelCase)
+
+이 패키지의 DTO 필드는 **camelCase**(`schoolId`, `accessToken`)입니다.
+백엔드(FastAPI)는 내부적으로 snake_case를 쓰지만, 응답/요청 JSON은 camelCase로
+주고받도록 맞춰져 있습니다(`backend/app/schemas/base.py`의 `CamelModel`).
+따라서 **여기 타입이 실제 API JSON과 1:1로 일치**합니다.
+
 ## ⚠️ 유지보수
 
 `db/schema.sql`의 ENUM/컬럼을 바꾸면 **`enums.ts`·`types.ts`도 함께 갱신**하세요.

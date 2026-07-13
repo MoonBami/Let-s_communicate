@@ -1,7 +1,12 @@
 import { useForm } from 'react-hook-form';
+import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { API, type CreateComplaintRequest, type Complaint } from '@sotong/shared';
 import { api } from '@/lib/api';
+
+// 데모 시드(seed.py)와 맞춘 고정 UUID — 접수 건이 데모 교사에게 라우팅되도록.
+const DEMO_SCHOOL_ID = '11111111-1111-1111-1111-111111111111';
+const DEMO_STUDENT_ID = '22222222-2222-2222-2222-222222222222';
 
 // 학부모 민원 접수 화면 (F1 진입점). 제출하면 백엔드에서 분류·필터를 거침.
 export function ParentComplaintPage() {
@@ -9,7 +14,11 @@ export function ParentComplaintPage() {
 
   const mutation = useMutation({
     mutationFn: async (payload: CreateComplaintRequest) => {
-      const { data } = await api.post<Complaint>(API.complaints.create, payload);
+      const { data } = await api.post<Complaint>(API.complaints.create, {
+        ...payload,
+        schoolId: DEMO_SCHOOL_ID,
+        studentId: DEMO_STUDENT_ID,
+      });
       return data;
     },
     onSuccess: () => reset(),
@@ -17,13 +26,15 @@ export function ParentComplaintPage() {
 
   return (
     <div className="mx-auto max-w-xl px-4 py-10">
-      <h1 className="text-xl font-bold mb-1">민원 접수</h1>
+      <Link to="/login" className="text-sm text-slate-400 hover:text-slate-600">
+        ← 교사·관리자 로그인
+      </Link>
+      <h1 className="text-xl font-bold mb-1 mt-3">민원 접수</h1>
       <p className="text-sm text-slate-500 mb-6">
         접수된 내용은 AI 분류·검토를 거쳐 담당 교사에게 전달됩니다.
       </p>
 
       <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-        <input type="hidden" {...register('schoolId')} value="DEMO_SCHOOL_ID" />
         <label className="block space-y-1">
           <span className="text-sm text-slate-600">제목</span>
           <input

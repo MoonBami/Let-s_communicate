@@ -12,7 +12,7 @@ pgvector==0.3.2
 
 # --- Auth ---
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+bcrypt>=4.1              # passlib 1.7.4는 최신 bcrypt와 호환성 버그가 있어 직접 사용
 python-multipart==0.0.9
 
 # --- Async tasks (F7 STT, 배치 분석) ---

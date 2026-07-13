@@ -1,6 +1,7 @@
 // API 경로 상수 — 프론트/백엔드가 같은 문자열을 참조하도록 한 곳에 모음.
 export const API = {
   auth: {
+    signup: '/api/auth/signup',
     login: '/api/auth/login',
     me: '/api/auth/me',
   },

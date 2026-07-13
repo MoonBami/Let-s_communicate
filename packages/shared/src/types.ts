@@ -53,6 +53,21 @@ export interface Classification {
   isAutoRouted: boolean;
 }
 
+/** F2 감정·위험 분석 결과 */
+export interface RiskAnalysis {
+  sentimentScore: number | null; // -1 ~ 1
+  aggressionScore: number | null; // 0 ~ 1
+  risk: RiskLevel;
+  reasons: string[]; // 위험 판단 근거
+  modelName: string | null;
+}
+
+/** 민원 상세 — 목록(Complaint)에 최신 분류·위험 분석을 덧붙인 형태 */
+export interface ComplaintDetail extends Complaint {
+  classification: Classification | null;
+  riskAnalysis: RiskAnalysis | null;
+}
+
 /** F4 답변 초안 */
 export interface AnswerDraft {
   id: string;
@@ -81,6 +96,14 @@ export interface AuthTokens {
 export interface LoginRequest {
   email: string;
   password: string;
+}
+
+/** 교사·관리자 회원가입 요청 */
+export interface SignupRequest {
+  email: string;
+  password: string;
+  name: string;
+  role: Extract<UserRole, 'teacher' | 'admin'>;
 }
 
 export interface Paginated<T> {
