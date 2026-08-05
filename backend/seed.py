@@ -1,4 +1,4 @@
-"""데모 시드 데이터 — 로컬에서 로그인·라우팅을 바로 테스트하기 위한 최소 계정.
+"""데모 시드 데이터 — 로컬에서 로그인·라우팅·유사 사례를 바로 테스트하기 위한 최소 데이터.
 
 실행:
     (.venv 활성화 후, backend 디렉터리에서)
@@ -14,7 +14,9 @@ from sqlalchemy import select
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models.analysis import TeacherAssignment
+from app.models.case import ComplaintCase
 from app.models.user import School, Student, User
+from app.services.ai import index_case
 
 # 프론트(ParentComplaintPage)와 맞추기 위한 고정 UUID
 SCHOOL_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -25,7 +27,32 @@ DEMO_PASSWORD = "demo1234"
 ACCOUNTS = [
     {"email": "admin@demo.sotong", "name": "데모 관리자", "role": "admin"},
     {"email": "teacher@demo.sotong", "name": "데모 교사", "role": "teacher"},
+    {"email": "mdt@demo.sotong", "name": "데모 민원대응팀", "role": "mdt"},
     {"email": "parent@demo.sotong", "name": "데모 학부모", "role": "parent"},
+]
+
+# F5 유사 사례 검색이 바로 결과를 내도록 하는 최소 지식베이스
+DEMO_CASES = [
+    {
+        "category": "grades",
+        "summary": "수행평가 점수 산정 기준이 불투명하다는 학부모 이의 제기",
+        "resolution": "평가 기준표와 배점 근거를 문서로 안내하고, 재검토 요청 절차를 함께 고지",
+    },
+    {
+        "category": "life",
+        "summary": "교실에서 친구와 다툰 뒤 지도 방식에 대한 학부모 항의",
+        "resolution": "양측 학생 면담 기록을 공유하고 담임·상담교사 합동 면담 일정을 제안",
+    },
+    {
+        "category": "violence_dispute",
+        "summary": "지속적인 괴롭힘을 주장하며 즉각 조치를 요구한 민원",
+        "resolution": "학교폭력 사안으로 접수해 전담기구에 이관, 분리 조치와 상담을 병행",
+    },
+    {
+        "category": "learning",
+        "summary": "수업 진도가 빨라 아이가 따라가지 못한다는 학습 지도 문의",
+        "resolution": "단원별 보충 자료 제공과 방과후 보충 학습 참여 안내",
+    },
 ]
 
 
@@ -77,6 +104,19 @@ def main() -> None:
         if exists_assign is None:
             db.add(TeacherAssignment(teacher_id=teacher.id, student_id=STUDENT_ID, grade=3, class_name="2"))
             created.append("teacher_assignment")
+
+        # F5 지식베이스 — summary 로 중복 판단(멱등)
+        for spec in DEMO_CASES:
+            existing_case = db.execute(
+                select(ComplaintCase).where(ComplaintCase.summary == spec["summary"])
+            ).scalar_one_or_none()
+            if existing_case is not None:
+                continue
+            case = ComplaintCase(**spec)
+            db.add(case)
+            db.flush()  # case.id 확보 (임베딩 FK용)
+            index_case(db, case)
+            created.append(f"case:{spec['category']}")
 
         db.commit()
     finally:

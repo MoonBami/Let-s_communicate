@@ -68,3 +68,10 @@ export const RISK_LABEL: Record<RiskLevel, string> = {
   high: '높음',
   critical: '긴급',
 };
+
+export const ESCALATION_STATUS_LABEL: Record<EscalationStatus, string> = {
+  requested: '이관 요청',
+  accepted: '접수됨',
+  resolved: '해결',
+  rejected: '반송',
+};

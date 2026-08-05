@@ -21,3 +21,4 @@ redis==5.0.7
 
 # --- AI ---
 anthropic==0.31.2
+httpx==0.27.0            # 임베딩(F5)·STT(F7) 외부 HTTP 호출

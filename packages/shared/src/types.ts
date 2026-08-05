@@ -4,6 +4,7 @@ import type {
   ComplaintCategory,
   ComplaintChannel,
   ComplaintStatus,
+  EscalationStatus,
   RiskLevel,
   UserRole,
 } from './enums';
@@ -48,8 +49,8 @@ export interface CreateComplaintRequest {
 /** F1 분류 결과 */
 export interface Classification {
   predicted: ComplaintCategory;
-  confidence: number; // 0.0 ~ 1.0
-  modelName: string;
+  confidence: number | null; // 0.0 ~ 1.0
+  modelName: string | null;
   isAutoRouted: boolean;
 }
 
@@ -73,10 +74,59 @@ export interface AnswerDraft {
   id: string;
   complaintId: string;
   draftBody: string;
-  modelName: string;
+  modelName: string | null;
   isAdopted: boolean;
   editedBody: string | null;
   createdAt: string;
+}
+
+/** F5 유사 사례 검색 결과 */
+export interface SimilarCase {
+  caseId: string;
+  category: ComplaintCategory | null;
+  summary: string;
+  resolution: string;
+  similarity: number; // 0~1 코사인 유사도
+}
+
+/** F5 지식베이스 사례 */
+export interface ComplaintCase {
+  id: string;
+  sourceComplaintId: string | null;
+  category: ComplaintCategory | null;
+  summary: string;
+  resolution: string;
+  createdAt: string;
+}
+
+export interface CreateCaseRequest {
+  sourceComplaintId?: string;
+  category?: ComplaintCategory;
+  summary: string;
+  resolution: string;
+}
+
+/** F8 MDT 이관 */
+export interface Escalation {
+  id: string;
+  complaintId: string;
+  requestedBy: string | null;
+  assignedTo: string | null;
+  status: EscalationStatus;
+  reason: string | null;
+  resolution: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface CreateEscalationRequest {
+  complaintId: string;
+  reason: string;
+}
+
+export interface UpdateEscalationRequest {
+  status: Extract<EscalationStatus, 'accepted' | 'resolved' | 'rejected'>;
+  resolution?: string;
 }
 
 /** F9 대시보드 집계 한 줄 */

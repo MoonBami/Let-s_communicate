@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   API,
   CATEGORY_LABEL,
@@ -39,7 +40,11 @@ export function TeacherInboxPage() {
 
       <div className="space-y-2">
         {data?.items.map((c) => (
-          <article key={c.id} className="rounded-lg border bg-white p-4">
+          <Link
+            key={c.id}
+            to={`/complaints/${c.id}`}
+            className="block rounded-lg border bg-white p-4 hover:border-brand"
+          >
             <div className="flex items-center gap-2 mb-1">
               <span className={`text-xs px-2 py-0.5 rounded ${riskColor[c.risk] ?? ''}`}>
                 {RISK_LABEL[c.risk]}
@@ -53,7 +58,7 @@ export function TeacherInboxPage() {
             </div>
             <h2 className="font-medium">{c.title ?? '(제목 없음)'}</h2>
             <p className="text-sm text-slate-600 line-clamp-2">{c.body}</p>
-          </article>
+          </Link>
         ))}
         {data && data.items.length === 0 && (
           <p className="text-sm text-slate-500">표시할 민원이 없습니다.</p>

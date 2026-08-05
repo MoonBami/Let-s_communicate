@@ -16,6 +16,7 @@ _COMPLAINT_STATUS = (
     "in_progress", "answered", "escalated", "closed",
 )
 _RISK_LEVEL = ("low", "medium", "high", "critical")
+_ESCALATION_STATUS = ("requested", "accepted", "resolved", "rejected")
 
 
 def user_role() -> ENUM:
@@ -36,3 +37,7 @@ def complaint_status() -> ENUM:
 
 def risk_level() -> ENUM:
     return ENUM(*_RISK_LEVEL, name="risk_level", create_type=False)
+
+
+def escalation_status() -> ENUM:
+    return ENUM(*_ESCALATION_STATUS, name="escalation_status", create_type=False)

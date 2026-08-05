@@ -19,6 +19,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Celery (워커·beat 런타임 산출물)
+celerybeat-schedule*
+celerybeat.pid
+
 # OS / editor
 .DS_Store
 .idea/
