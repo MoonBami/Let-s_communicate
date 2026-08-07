@@ -35,8 +35,19 @@ uvicorn app.main:app --reload --port 8000
 
 ### 3) 데모 데이터 시드
 ```bash
-python seed.py    # 데모 학교·학생·교사배정 + 계정 3개 (비번 demo1234)
+python seed.py    # 데모 학교·학생·교사배정 + 계정 4개(비번 demo1234) + F5 사례 4건
 ```
+
+### 4) Celery 워커 (선택 — F5 인덱싱·F7 STT 비동기 처리)
+```bash
+# Redis 컨테이너
+docker run -d --name sotong-redis -p 6379:6379 redis:7
+
+celery -A app.worker.celery_app:celery_app worker --loglevel=info
+celery -A app.worker.celery_app:celery_app beat   --loglevel=info   # 주기 작업
+```
+> API 서버만 띄워도 모든 기능이 동작한다. 워커는 사례 임베딩 재인덱싱과
+> 녹음 STT 변환을 요청 경로 밖으로 빼기 위한 것이다.
 
 - API 문서(Swagger): http://localhost:8000/docs
 - 헬스체크: http://localhost:8000/health
@@ -44,12 +55,14 @@ python seed.py    # 데모 학교·학생·교사배정 + 계정 3개 (비번 de
 > `ANTHROPIC_API_KEY`를 비워두면 AI 서비스가 **규칙 기반 fallback**으로 동작해
 > 키 없이도 앱이 뜹니다(F1 키워드 분류 / F2 휴리스틱 위험 / F4 템플릿 답변).
 > F3 욕설 필터는 애초에 결정론적 규칙 기반이라 키와 무관하게 동일 동작.
+> F5 임베딩도 `EMBEDDING_API_KEY`가 없으면 결정론적 해싱 임베딩으로 동작한다.
 
 ## 데모 계정 (seed.py, 비밀번호 `demo1234`)
 
 | 이메일 | 역할 |
 |--------|------|
 | `admin@demo.sotong` | 관리자 |
+| `mdt@demo.sotong` | 민원대응팀(MDT) |
 | `teacher@demo.sotong` | 교사 (시드 학생 배정 있음 → 민원함에 라우팅 건 표시) |
 | `parent@demo.sotong` | 학부모 |
 
@@ -66,15 +79,23 @@ app/
 │  ├─ user.py         #   School · User · Student
 │  ├─ complaint.py    #   Complaint · AnswerDraft
 │  ├─ analysis.py     #   Classification · RiskAnalysis · ContentFilterLog · TeacherAssignment
+│  ├─ case.py         #   ComplaintCase · CaseEmbedding (F5, pgvector)
+│  ├─ escalation.py   #   Escalation (F8)
+│  ├─ recording.py    #   Recording · Transcript (F7)
 │  └─ _enums.py       #   PostgreSQL 네이티브 ENUM 바인딩 (schema.sql의 CREATE TYPE와 매핑)
 ├─ schemas/           # Pydantic 입출력 스키마
 │  └─ base.py         #   CamelModel — JSON은 camelCase, 내부는 snake_case (shared 계약 정합)
 ├─ api/
-│  ├─ deps.py         # get_current_user 등 의존성
-│  └─ routes/         # auth(signup/login/me) · complaints(F1~F4) · dashboard(F9)
-├─ services/ai/       # classifier(F1) · risk(F2) · content_filter(F3) · drafter(F4)
-│  ├─ routing.py      #   teacher_assignments 기반 담당 교사 자동 배정
-│  └─ client.py       #   Anthropic 래퍼 (키 없으면 None → fallback)
+│  ├─ deps.py         # get_current_user · require_roles · load_visible_complaint
+│  └─ routes/         # auth · complaints(F1~F5) · escalations(F8) · cases(F5) · dashboard(F9)
+├─ services/
+│  ├─ ai/             # classifier(F1) · risk(F2) · content_filter(F3) · drafter(F4)
+│  │  ├─ embedding.py #   임베딩 생성 (외부 API → 해싱 fallback)
+│  │  ├─ retriever.py #   F5 유사 사례 검색 (pgvector 코사인)
+│  │  ├─ routing.py   #   teacher_assignments 기반 담당 교사 자동 배정
+│  │  └─ client.py    #   Anthropic 래퍼 (키 없으면 None → fallback)
+│  └─ stt.py          # F7 CLOVA Speech 변환
+├─ worker/            # Celery 앱 + 태스크 (사례 인덱싱 · STT 변환)
 └─ seed.py            # 데모 시드 스크립트 (backend/ 루트)
 ```
 
@@ -83,16 +104,33 @@ app/
 
 ## API 개요
 
-| 메서드·경로 | 설명 | 인증 |
+| 메서드·경로 | 설명 | 권한 |
 |-------------|------|------|
-| `POST /api/auth/signup` | 교사·관리자 회원가입 → 토큰 발급 | - |
-| `POST /api/auth/login` | 로그인 → 토큰 발급 | - |
-| `GET /api/auth/me` | 내 정보 | ✅ |
-| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→라우팅) | - |
-| `GET /api/complaints` | 교사 민원함 (필터 통과분, 교사면 본인 배정) | ✅ |
-| `GET /api/complaints/{id}` | 민원 상세 (차단 건은 admin·mdt만) | ✅ |
-| `POST /api/complaints/{id}/draft` | F4 답변 초안 생성 | ✅ |
-| `GET /api/dashboard/stats` | F9 집계 | ✅ |
+| `POST /api/auth/signup` | 교사·관리자 회원가입 → 토큰 발급 | 공개 |
+| `POST /api/auth/login` | 로그인 → 토큰 발급 | 공개 |
+| `GET /api/auth/me` | 내 정보 | 로그인 |
+| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→라우팅) | 공개 |
+| `GET /api/complaints` | 교사 민원함 (필터 통과분, 교사면 본인 배정) | teacher·admin·mdt |
+| `GET /api/complaints/{id}` | 민원 상세 | teacher(본인 배정)·admin·mdt |
+| `GET /api/complaints/{id}/similar-cases` | F5 유사 사례 검색 | teacher·admin·mdt |
+| `POST /api/complaints/{id}/draft` | F4 답변 초안 생성 (F5 사례 주입) | teacher·admin·mdt |
+| `GET /api/complaints/{id}/drafts` | 초안 이력 | teacher·admin·mdt |
+| `POST /api/escalations` | F8 이관 요청 | teacher·admin |
+| `GET /api/escalations` | F8 이관 목록 (`?status=`) | admin·mdt |
+| `PATCH /api/escalations/{id}` | F8 접수/해결/반송 | admin·mdt |
+| `POST /api/cases` | F5 지식베이스 사례 등록(+임베딩) | admin·mdt |
+| `GET /api/cases` | F5 사례 목록 | teacher·admin·mdt |
+| `GET /api/dashboard/stats` | F9 집계 | admin·mdt |
+
+### 권한 규칙
+
+`api/deps.py` 의 `require_roles(...)` 로 라우트 단위 역할을 통제하고,
+`load_visible_complaint(...)` 로 건별 열람 권한을 통제한다.
+
+- 토큰의 `role` 클레임이 아니라 **DB 의 현재 역할**로 판정한다 (발급 후 역할 변경·정지 반영).
+- 차단된 민원(`filtered=true`, 증거)은 **admin·mdt 만** 열람 가능.
+- 교사는 **본인에게 배정된 민원만** 상세·초안·이관 요청 가능.
+- 학부모는 접수만 하고 민원함·상세엔 접근하지 않는다.
 
 ## 접수 파이프라인 (F1~F3 + 라우팅)
 
@@ -112,6 +150,46 @@ F3 욕설·위협 필터 → F1 분류 → F2 위험 → 상태 결정 + 라우�
 - **F2**(`services/ai/risk.py`)는 Claude + 키워드 휴리스틱 fallback.
 - 분류·위험 결과는 `classifications` / `risk_analyses` 이력 테이블에 남고, `GET /api/complaints/{id}`(admin·mdt만 차단 건 열람) 로 조회.
 
+## 유사 사례 검색 (F5)
+
+`complaint_cases` + `case_embeddings`(pgvector) 를 코사인 거리로 검색해 F4 초안
+프롬프트에 근거로 주입한다.
+
+- 임베딩은 OpenAI 호환 `/v1/embeddings` 를 HTTP로 직접 호출(SDK 의존성 없이).
+  키가 없거나 호출이 실패하면 **결정론적 해싱 임베딩**(문자 2~3-gram signed hashing)으로 fallback.
+- 두 방식의 벡터는 공간이 달라 섞으면 안 되므로, `case_embeddings.model_name` 을 남기고
+  **검색 시 같은 모델의 벡터만 비교**한다.
+- 유사도 `MIN_SIMILARITY`(0.2) 미만은 초안 프롬프트에 넣지 않는다 — 무관한 사례가
+  섞이면 초안 품질이 오히려 떨어지기 때문.
+
+## 이관 (F8)
+
+교사가 단독 대응하기 어려운 민원을 관리자·MDT로 넘긴다. AI 오차단·오분류에 대한
+사람 재검토 경로이기도 하다.
+
+| 이관 처리 | escalations.status | complaints.status |
+|-----------|--------------------|-------------------|
+| 요청 | `requested` | `escalated` |
+| 접수 | `accepted` | (유지) |
+| 해결 | `resolved` | `closed` (+`closed_at`) |
+| 반송 | `rejected` | `pending_teacher` |
+
+같은 민원에 진행 중(`requested`/`accepted`)인 이관이 있으면 중복 요청은 409.
+
+## 비동기 워커 (Celery)
+
+`app/worker/tasks.py`
+
+| 태스크 | 용도 |
+|--------|------|
+| `index_case_embedding(case_id)` | F5 단건 사례 임베딩 생성·갱신 |
+| `reindex_missing_case_embeddings()` | 임베딩 누락분 배치 채움 (beat: 매일 04:00 KST) |
+| `transcribe_recording(recording_id)` | F7 녹음 → 대화록 변환 |
+
+> STT 는 증빙을 만드는 경로라 미설정 시 **조용히 넘기지 않고 실패**시킨다(빈 대화록이
+> '아무 말도 없었다'로 오해되지 않도록). 녹음 고지·동의(`consent_given`)가 기록되지
+> 않은 건도 변환을 거부한다(통신비밀보호법).
+
 ## DB
 
 `../db/schema.sql`을 PostgreSQL 15+(pgvector)에 적용(위 Docker 절차 참고). ORM 모델은
@@ -124,7 +202,11 @@ F3 욕설·위협 필터 → F1 분류 → F2 위험 → 상태 결정 + 라우�
 - [x] ~~F2 위험 탐지 · F3 욕설 필터를 접수 파이프라인에 연결~~
 - [x] ~~민원 라우팅: `teacher_assignments` 기반 `assigned_teacher_id` 자동 배정~~
 - [x] ~~사용자 시드(`python seed.py`) / 회원가입(`POST /api/auth/signup`)~~
-- [ ] F5 RAG: `complaint_cases` + pgvector 임베딩 검색 → drafter에 주입
-- [ ] 역할별 권한 세분화 (라우트 가드)
-- [ ] F8 이관(escalations): 교사 → MDT/관리자 이관 엔드포인트
-- [ ] Celery + Redis 워커 (STT 변환·배치 분석)
+- [x] ~~F5 RAG: `complaint_cases` + pgvector 임베딩 검색 → drafter에 주입~~
+- [x] ~~역할별 권한 세분화 (라우트 가드)~~
+- [x] ~~F8 이관(escalations): 교사 → MDT/관리자 이관 엔드포인트~~
+- [x] ~~Celery + Redis 워커 (STT 변환·배치 분석)~~
+- [ ] Alembic 마이그레이션 도입 (`alembic init`) — 운영 전환 전 필수
+- [ ] F6 안심번호·예약 상담 (통신사/제3자 가상번호 연동)
+- [ ] `audit_logs` 기록: 증거·녹음 열람 추적
+- [ ] AI 서비스 단위 테스트 (필터 오차단 회귀 방지)

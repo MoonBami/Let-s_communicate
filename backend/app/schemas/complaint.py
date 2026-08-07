@@ -17,6 +17,8 @@ class ComplaintCreate(CamelModel):
 class ComplaintOut(CamelModel):
     id: uuid.UUID
     school_id: uuid.UUID
+    parent_id: uuid.UUID | None
+    student_id: uuid.UUID | None
     assigned_teacher_id: uuid.UUID | None
     channel: str
     title: str | None
@@ -28,6 +30,7 @@ class ComplaintOut(CamelModel):
     filtered: bool
     created_at: datetime
     updated_at: datetime
+    closed_at: datetime | None
 
 
 class Paginated(CamelModel):
@@ -41,6 +44,7 @@ class ClassificationOut(CamelModel):
     predicted: str
     confidence: float | None
     model_name: str | None
+    is_auto_routed: bool
 
 
 class RiskOut(CamelModel):

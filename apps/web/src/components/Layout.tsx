@@ -2,13 +2,15 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
 
 const navItems = [
-  { to: '/inbox', label: '민원함' },
-  { to: '/dashboard', label: '대시보드' },
+  { to: '/inbox', label: '민원함', roles: ['teacher', 'admin', 'mdt'] },
+  { to: '/escalations', label: '이관 관리', roles: ['admin', 'mdt'] },
+  { to: '/dashboard', label: '대시보드', roles: ['admin', 'mdt'] },
 ];
 
 export function Layout() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const visibleNav = navItems.filter((item) => !user || item.roles.includes(user.role));
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -17,7 +19,7 @@ export function Layout() {
           <div className="flex items-center gap-6">
             <span className="font-bold text-brand">소통해요</span>
             <nav className="flex gap-1">
-              {navItems.map((item) => (
+              {visibleNav.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}

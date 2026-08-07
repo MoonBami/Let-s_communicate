@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import load_visible_complaint, require_roles
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
 from app.models.user import User
+from app.schemas.case import SimilarCaseOut
 from app.schemas.complaint import (
     ClassificationOut,
     ComplaintCreate,
@@ -16,9 +17,19 @@ from app.schemas.complaint import (
     Paginated,
     RiskOut,
 )
-from app.services.ai import analyze_risk, classify, draft_answer, filter_content, route_teacher
+from app.services.ai import (
+    analyze_risk,
+    classify,
+    draft_answer,
+    filter_content,
+    route_teacher,
+    search_similar_cases,
+)
 
 router = APIRouter(prefix="/api/complaints", tags=["complaints"])
+
+# 민원을 다루는 내부 사용자 — 학부모는 접수만 하고 민원함·상세엔 접근하지 않는다.
+staff_only = require_roles("teacher", "admin", "mdt")
 
 # 위험도 순서 — 필터 심각도와 위험 분석 결과 중 높은 쪽을 채택할 때 사용.
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -111,7 +122,7 @@ def list_complaints(
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
+    current: User = Depends(staff_only),
 ):
     """교사 민원함 — 필터 통과분만. 교사면 본인 배정 건으로 제한."""
     stmt = select(Complaint).where(Complaint.filtered.is_(False))
@@ -132,18 +143,10 @@ def list_complaints(
 def get_complaint(
     complaint_id: str,
     db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
+    current: User = Depends(staff_only),
 ):
-    """민원 상세 — 최신 분류·위험 분석 포함.
-
-    차단된 민원(증거)은 admin·mdt 만 열람 가능. 교사에겐 노출되지 않는다.
-    """
-    complaint = db.get(Complaint, complaint_id)
-    if complaint is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "민원을 찾을 수 없습니다.")
-
-    if complaint.filtered and current.role not in ("admin", "mdt"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "열람 권한이 없습니다.")
+    """민원 상세 — 최신 분류·위험 분석 포함."""
+    complaint = load_visible_complaint(db, complaint_id, current)
 
     latest_cls = db.execute(
         select(Classification)
@@ -166,20 +169,52 @@ def get_complaint(
     return detail
 
 
+@router.get("/{complaint_id}/similar-cases", response_model=list[SimilarCaseOut])
+def similar_cases(
+    complaint_id: str,
+    limit: int = 3,
+    db: Session = Depends(get_db),
+    current: User = Depends(staff_only),
+):
+    """F5: 이 민원과 유사한 과거 사례·대응 방식."""
+    complaint = load_visible_complaint(db, complaint_id, current)
+    found = search_similar_cases(db, complaint.body, limit=limit, category=complaint.category)
+    return [SimilarCaseOut.model_validate(c) for c in found]
+
+
 @router.post("/{complaint_id}/draft", response_model=DraftOut)
 def create_draft(
     complaint_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current: User = Depends(staff_only),
 ):
-    """F4: AI 답변 초안 생성."""
-    complaint = db.get(Complaint, complaint_id)
-    if complaint is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "민원을 찾을 수 없습니다.")
+    """F4: AI 답변 초안 생성 — F5로 찾은 유사 사례를 근거로 주입한다."""
+    complaint = load_visible_complaint(db, complaint_id, current)
 
-    body, model_name = draft_answer(complaint.body)
+    cases = search_similar_cases(db, complaint.body, category=complaint.category)
+    body, model_name = draft_answer(
+        complaint.body,
+        similar_cases=[c.as_prompt_line() for c in cases],
+    )
+
     draft = AnswerDraft(complaint_id=complaint.id, draft_body=body, model_name=model_name)
     db.add(draft)
     db.commit()
     db.refresh(draft)
     return draft
+
+
+@router.get("/{complaint_id}/drafts", response_model=list[DraftOut])
+def list_drafts(
+    complaint_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(staff_only),
+):
+    """이 민원에 대해 생성된 답변 초안 이력."""
+    complaint = load_visible_complaint(db, complaint_id, current)
+    drafts = db.execute(
+        select(AnswerDraft)
+        .where(AnswerDraft.complaint_id == complaint.id)
+        .order_by(AnswerDraft.created_at.desc())
+    ).scalars().all()
+    return list(drafts)

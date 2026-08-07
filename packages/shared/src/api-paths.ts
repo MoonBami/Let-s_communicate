@@ -9,7 +9,18 @@ export const API = {
     list: '/api/complaints',
     create: '/api/complaints',
     detail: (id: string) => `/api/complaints/${id}`,
-    draft: (id: string) => `/api/complaints/${id}/draft`, // F4
+    draft: (id: string) => `/api/complaints/${id}/draft`, // F4 생성
+    drafts: (id: string) => `/api/complaints/${id}/drafts`, // F4 이력
+    similarCases: (id: string) => `/api/complaints/${id}/similar-cases`, // F5
+  },
+  escalations: {
+    list: '/api/escalations', // F8 (admin·mdt)
+    create: '/api/escalations', // F8 이관 요청 (teacher·admin)
+    update: (id: string) => `/api/escalations/${id}`,
+  },
+  cases: {
+    list: '/api/cases', // F5 지식베이스
+    create: '/api/cases',
   },
   dashboard: {
     stats: '/api/dashboard/stats', // F9

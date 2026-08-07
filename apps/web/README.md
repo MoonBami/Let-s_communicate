@@ -27,12 +27,15 @@ src/
 │  ├─ api.ts          # axios 인스턴스 (JWT 자동 첨부, 401 처리)
 │  └─ queryClient.ts  # TanStack Query 설정
 ├─ store/auth.ts      # Zustand 인증 상태 (persist)
-├─ components/        # Layout · RequireAuth
+├─ components/        # Layout(역할별 네비) · RequireAuth(roles 지원)
 └─ pages/
    ├─ LoginPage             # 교사·관리자 로그인
+   ├─ SignupPage            # 교사·관리자 회원가입
    ├─ ParentComplaintPage   # 학부모 민원 접수 (F1 진입점)
    ├─ TeacherInboxPage      # 교사 민원함 (필터 통과분)
-   └─ AdminDashboardPage    # F9 통계 대시보드 (Recharts)
+   ├─ ComplaintDetailPage   # 민원 상세 — F1·F2 분석 / F5 유사사례 / F4 초안 / F8 이관
+   ├─ EscalationsPage       # F8 이관 관리 (admin·mdt)
+   └─ AdminDashboardPage    # F9 통계 대시보드 (Recharts, admin·mdt)
 ```
 
 ## 규칙
@@ -40,3 +43,5 @@ src/
 - 도메인 타입·ENUM·API 경로는 `@sotong/shared`에서 가져다 쓸 것 (중복 정의 금지).
 - 서버 상태는 TanStack Query, 클라이언트 전역 상태는 Zustand.
 - 폼은 React Hook Form + Zod.
+- 화면 접근 제어는 `RequireAuth roles={...}` 로 두고, **백엔드 권한 가드와 같은 기준**을
+  쓴다. 프론트 가드는 UX용이고 실제 통제는 백엔드(`require_roles`)가 한다.
