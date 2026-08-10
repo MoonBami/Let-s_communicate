@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+﻿from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
+from app.models.analysis import AuditLog, Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
 from app.models.user import User
 from app.schemas.complaint import (
@@ -33,10 +33,6 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
     """학부모 민원 접수 → AI 게이트웨이 파이프라인.
 
     F3(욕설·위협 필터) → F1(분류) → F2(위험) → 라우팅 순으로 태운 뒤 상태를 정한다.
-    - 욕설·위협 차단: 교사 미노출, 원문을 증거로 보관(status=filtered_blocked).
-    - 단순 행정: 챗봇 자동 응대 후보(status=auto_answered).
-    - 그 외 정당한 민원: 담당 교사 자동 배정(status=pending_teacher).
-    분류·위험 결과는 이력 테이블에 함께 남긴다.
     """
     body = payload.body
 
@@ -55,21 +51,18 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
     )
 
     if filter_result.is_blocked:
-        # 위협성 → 차단 + 증거. 교사에게 넘기지 않는다.
         complaint.status = "filtered_blocked"
         complaint.filtered = True
         complaint.risk = _max_risk(complaint.risk, filter_result.severity)
     elif classification.category == "administrative":
-        # 단순 행정 → 챗봇 자동 응대 후보
         complaint.status = "auto_answered"
         complaint.is_auto_handled = True
     else:
-        # 정당한 민원 → 담당 교사 자동 배정
         complaint.status = "pending_teacher"
         complaint.assigned_teacher_id = route_teacher(db, payload.student_id)
 
     db.add(complaint)
-    db.flush()  # complaint.id 확보 (자식 레코드 FK용)
+    db.flush()
 
     db.add(
         Classification(
@@ -97,7 +90,7 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
                 is_blocked=True,
                 matched_terms=filter_result.matched_terms,
                 severity=filter_result.severity,
-                raw_evidence=body,  # 원문 증거 (접근 통제·암호화는 저장 계층 책임)
+                raw_evidence=body,
             )
         )
 
@@ -144,6 +137,18 @@ def get_complaint(
 
     if complaint.filtered and current.role not in ("admin", "mdt"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "열람 권한이 없습니다.")
+
+    # 차단 민원(증거) 열람 시 감사 로그 기록 (누가·언제·무엇을)
+    if complaint.filtered:
+        db.add(
+            AuditLog(
+                user_id=current.id,
+                action="VIEW_BLOCKED_COMPLAINT",
+                entity_type="complaint",
+                entity_id=complaint.id,
+            )
+        )
+        db.commit()
 
     latest_cls = db.execute(
         select(Classification)
