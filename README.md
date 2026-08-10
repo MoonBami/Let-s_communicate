@@ -117,6 +117,25 @@ Let's_communicate/
 - **Python 3.11 또는 3.12** (3.13/3.14는 핀 버전 휠 미제공으로 빌드 실패 가능 → 최신 버전 대체 설치 필요)
 - **Docker Desktop** — DB를 컨테이너로 띄운다. PostgreSQL을 직접 설치하지 않아도 됨.
 
+### 0) 더 빠른 방법: Docker Compose 한 번에
+
+아래 1~5 단계(DB·백엔드·프론트·워커를 각각 손으로 띄우는 것)를 컨테이너
+하나로 대신할 수 있다. 팀원 간 환경 차이를 없애고 싶을 때 이 방법을 권장.
+
+```bash
+cp backend/.env.example backend/.env    # 기본값 그대로면 아래 서비스에 바로 연결됨
+docker compose up --build               # db·redis·backend·worker·beat·web 전부 기동
+docker compose exec backend python seed.py   # 데모 계정·데이터 시드 (최초 1회)
+```
+- DB 스키마(`db/schema.sql`)는 `db` 컨테이너 최초 생성 시 자동 적용됨(볼륨이 비어있을 때만).
+  스키마를 고쳤는데 반영이 안 되면 `docker compose down -v`로 볼륨을 지우고 다시 `up`.
+- 코드는 볼륨 마운트되어 있어 backend는 `--reload`, web은 Vite dev server로 핫리로드된다.
+- 특정 서비스만 띄우고 싶으면 `docker compose up -d db redis` 처럼 서비스명을 지정.
+- 로그: `docker compose logs -f backend` (worker/beat/web도 동일)
+- 종료: `docker compose down` (데이터까지 지우려면 `-v` 추가)
+
+아래는 컨테이너 없이 직접 실행하는 수동 절차(디버깅이나 IDE 연동 시 유용).
+
 ### 1) 데이터베이스 (Docker)
 ```bash
 # Postgres 16 + pgvector 컨테이너
