@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import load_visible_complaint, require_roles
+from app.api.deps import can_view_filtered, load_visible_complaint, require_roles
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
@@ -139,8 +139,18 @@ def list_complaints(
     db: Session = Depends(get_db),
     current: User = Depends(staff_only),
 ):
-    """교사 민원함 — 필터 통과분만. 교사면 본인 배정 건으로 제한."""
-    stmt = select(Complaint).where(Complaint.filtered.is_(False))
+    """민원 목록 — 역할에 따라 보이는 범위가 다르다.
+
+    - 교사: 본인에게 배정된, 필터를 통과한 민원만
+    - admin·mdt: 차단된 민원(F3 증거)까지 전부. 증거를 찾을 화면이 여기뿐이므로
+      목록에서 빼면 UUID 를 아는 경우 말고는 도달할 수 없다(상세와 같은 규칙).
+
+    차단 건은 `status=filtered_blocked` / `filtered=true` 로 구분되므로 목록에서
+    섞여 보여도 화면에서 식별된다.
+    """
+    stmt = select(Complaint)
+    if not can_view_filtered(current.role):
+        stmt = stmt.where(Complaint.filtered.is_(False))
     if current.role == "teacher":
         stmt = stmt.where(Complaint.assigned_teacher_id == current.id)
 
