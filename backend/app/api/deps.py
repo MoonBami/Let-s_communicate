@@ -49,6 +49,17 @@ def require_roles(*roles: str) -> Callable[[User], User]:
     return guard
 
 
+# 차단된 민원(F3 증거)을 열람할 수 있는 역할.
+# 목록과 상세가 **같은 규칙**을 써야 한다 — 상세는 허용하는데 목록에서 빼면
+# 관리자가 UUID 를 이미 아는 경우 말고는 증거에 도달할 수 없다(실제로 그랬다).
+EVIDENCE_ROLES = ("admin", "mdt")
+
+
+def can_view_filtered(role: str) -> bool:
+    """차단된 민원(증거)을 열람할 수 있는 역할인가."""
+    return role in EVIDENCE_ROLES
+
+
 def load_visible_complaint(db: Session, complaint_id: str, current: User) -> Complaint:
     """열람 권한을 확인하고 민원을 반환.
 
@@ -59,7 +70,7 @@ def load_visible_complaint(db: Session, complaint_id: str, current: User) -> Com
     if complaint is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "민원을 찾을 수 없습니다.")
 
-    if complaint.filtered and current.role not in ("admin", "mdt"):
+    if complaint.filtered and not can_view_filtered(current.role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "열람 권한이 없습니다.")
     if current.role == "teacher" and complaint.assigned_teacher_id != current.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "본인에게 배정된 민원만 열람할 수 있습니다.")
