@@ -1,5 +1,7 @@
+import type { UserRole } from '@sotong/shared';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { RoleHomeRedirect } from './components/RoleHomeRedirect';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { ParentComplaintPage } from './pages/ParentComplaintPage';
@@ -7,10 +9,13 @@ import { TeacherInboxPage } from './pages/TeacherInboxPage';
 import { ComplaintDetailPage } from './pages/ComplaintDetailPage';
 import { EscalationsPage } from './pages/EscalationsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { ParentDashboardPage } from './pages/ParentDashboardPage';
+import { ParentComplaintDetailPage } from './pages/ParentComplaintDetailPage';
 import { RequireAuth } from './components/RequireAuth';
 
-// 관리 화면은 관리자·MDT 전용 (백엔드 권한 가드와 동일 기준)
-const MANAGER_ROLES = ['admin', 'mdt'] as const;
+const PARENT_ROLES: readonly UserRole[] = ['parent'];
+const STAFF_ROLES: readonly UserRole[] = ['teacher', 'admin', 'mdt'];
+const MANAGER_ROLES: readonly UserRole[] = ['admin', 'mdt'];
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -25,9 +30,47 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/inbox" replace /> },
-      { path: 'inbox', element: <TeacherInboxPage /> }, // 교사 민원함
-      { path: 'complaints/:id', element: <ComplaintDetailPage /> }, // 상세 (F4·F5·F8)
+      { index: true, element: <RoleHomeRedirect /> },
+      {
+        path: 'parent',
+        element: (
+          <RequireAuth roles={PARENT_ROLES}>
+            <ParentDashboardPage />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: 'parent/new',
+        element: (
+          <RequireAuth roles={PARENT_ROLES}>
+            <ParentComplaintPage />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: 'parent/complaints/:id',
+        element: (
+          <RequireAuth roles={PARENT_ROLES}>
+            <ParentComplaintDetailPage />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: 'inbox',
+        element: (
+          <RequireAuth roles={STAFF_ROLES}>
+            <TeacherInboxPage />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: 'complaints/:id',
+        element: (
+          <RequireAuth roles={STAFF_ROLES}>
+            <ComplaintDetailPage />
+          </RequireAuth>
+        ),
+      },
       {
         path: 'escalations', // F8 이관 관리
         element: (

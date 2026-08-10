@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { API, type AuthTokens, type User } from '@sotong/shared';
 import { api } from '@/lib/api';
+import { getHomePath } from '@/lib/roleRoutes';
 import { useAuthStore } from '@/store/auth';
 
 export function LoginPage() {
@@ -21,7 +22,7 @@ export function LoginPage() {
         headers: { Authorization: `Bearer ${data.accessToken}` },
       });
       setAuth(data.accessToken, me.data);
-      navigate('/inbox');
+      navigate(getHomePath(me.data.role));
     } catch {
       setError('로그인 실패 (백엔드 연동 후 동작)');
     }
