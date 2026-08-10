@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { API, type AuthTokens, type SignupRequest, type User } from '@sotong/shared';
 import { api } from '@/lib/api';
+import { getHomePath } from '@/lib/roleRoutes';
 import { useAuthStore } from '@/store/auth';
 
 // 교사·관리자 회원가입. 성공하면 바로 로그인되어 민원함으로 이동.
@@ -31,7 +32,7 @@ export function SignupPage() {
         headers: { Authorization: `Bearer ${data.accessToken}` },
       });
       setAuth(data.accessToken, me.data);
-      navigate('/inbox');
+      navigate(getHomePath(me.data.role));
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       setError(
