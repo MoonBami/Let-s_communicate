@@ -104,7 +104,7 @@ Let's_communicate/
 | 영역 | 선택 |
 |------|------|
 | **프론트** | React 18 · TypeScript · Vite · Tailwind · TanStack Query · Zustand · React Router · React Hook Form + Zod · Recharts |
-| **백엔드** | Python · FastAPI · SQLAlchemy 2 · Pydantic v2 · JWT(python-jose) · Celery + Redis |
+| **백엔드** | Python · FastAPI · SQLAlchemy 2 · Pydantic v2 · JWT(python-jose) · Celery + Redis · pytest |
 | **DB / 인프라** | PostgreSQL 15+ · pgvector · Redis · S3 호환 스토리지 · Docker |
 | **AI** | Claude API (분류·답변) · 임베딩 RAG(pgvector) · STT(CLOVA/Whisper) |
 
@@ -208,22 +208,28 @@ cd backend && celery -A app.worker.celery_app:celery_app worker --loglevel=info
 - ✅ **자동 응대 게이트**: 신뢰도·위험도·안전 키워드를 교차 검증해, 확신 없는 건은
   챗봇에 맡기지 않고 교사에게 보냄 (오분류 비용이 비대칭이므로 자동 응대 쪽으로만 보수적)
 - ✅ **F2 위험**: 감정·공격성 → 위험도(low~critical) 기록
-- ✅ **F3 욕설·위협 필터**: 결정론적 규칙 기반 차단 + 원문 증거 보관(교사 미노출)
+- ✅ **F3 욕설·위협 필터**: 결정론적 규칙 기반 차단 + 원문 증거 보관(교사 미노출).
+  폭력을 *신고하는* 민원이 오차단되지 않도록 회귀 테스트로 고정
 - ✅ **자동 라우팅**: `teacher_assignments` 기반 담당 교사 배정
 - ✅ **F4 답변 초안**: F5 유사 사례를 근거로 주입해 생성, 초안 이력 보관
 - ✅ **F5 유사 사례(RAG)**: pgvector 코사인 검색 + 지식베이스 관리
 - ✅ **F8 MDT 이관**: 이관 요청 → 접수 → 해결/반송, 민원 상태 연동
 - ✅ **F9 대시보드**: 카테고리·위험도·상태별 집계
 - ✅ **Celery 워커**: 사례 임베딩 배치 인덱싱, F7 STT 변환 태스크
+- ✅ **테스트 149건**: 안전 판정 경로(게이트·F3 필터)와 데이터·평가 도구 회귀 고정
+  — `cd backend && pytest` (DB 불필요, 0.5초)
+- ✅ **F1 자체 모델 기반**: 합성 민원 생성기 + 평가 하네스(정확도 + 안전 지표) + 기준선
 - ✅ 프론트/백엔드 계약을 camelCase로 통일(`@sotong/shared`와 일치)
 
-**남은 것 (Phase 3)**: F6 안심번호·예약 상담(외부 사업자 연동 필요), F7 녹음 수집·재생 UI,
-Alembic 마이그레이션, `audit_logs` 기록, AI 서비스 테스트.
+**남은 것**: API 라우트·워커 테스트, Alembic 마이그레이션, `audit_logs` 기록,
+챗봇 자동 응대 실체화, 학부모 동선(`parent_id` 연결), 프론트 반응형·목록 필터,
+F6 안심번호(외부 사업자 연동 필요), F7 녹음 수집·재생 UI.
 
 키가 없어도 앱은 뜹니다 — `ANTHROPIC_API_KEY` 없으면 F1·F2·F4가 규칙 기반 fallback으로,
 `EMBEDDING_API_KEY` 없으면 F5가 결정론적 해싱 임베딩으로 동작합니다.
 
 > 📋 **기능별 검증 수준·알려진 갭·다음 우선순위는 [`docs/development-status.md`](docs/development-status.md) 참고.**
-> (테스트 미도입, 챗봇 자동 응대 미실체화, 학부모 동선 부재 등 실제 갭을 정리해 두었습니다.)
+> (챗봇 자동 응대 미실체화, 학부모 동선 부재, API 테스트 부재 등 실제 갭과
+> F1 분류기 기준선을 정리해 두었습니다.)
 
 백엔드 상세는 [`backend/README.md`](backend/README.md) 참고.
