@@ -227,6 +227,34 @@ python scripts/gen_synthetic_complaints.py --count 30 --eval-ratio 0.2 --check-f
 > 모든 레코드에 `source="synthetic"` 이 박히며, **학습 전 표본 검수는 필수**다.
 > 실제 민원이 쌓이는 대로 재학습·재평가해야 한다.
 
+## F1 분류기 평가 (scripts/eval_classifier.py)
+
+**정확도만 보면 안 된다.** 전체 정확도 95%인 분류기가 학교폭력 민원만 골라서 틀리면
+최악이고, 80%여도 위험한 민원을 놓치지 않으면 훨씬 낫다. 그래서 세 층으로 보고한다.
+
+| 층 | 내용 |
+|----|------|
+| 1. 일반 지표 | 카테고리별 정밀도·재현율·F1, macro F1, 혼동행렬 |
+| 2. **치명 오류** | 학교폭력·분쟁을 `administrative` 로 예측한 비율 — 이 경로만이 자동 응대로 이어진다 |
+| 3. **최종 안전** | 분류기 + 자동응대 게이트를 통과시켜, 실제로 자동 응대될 위험 민원 건수 |
+
+2번이 0이 아니어도 3번이 0이면 게이트가 막아준 것이다. **3번이 0이 아니면 배포하면
+안 된다.** `--max-unsafe` 로 임계값을 넘으면 종료코드 1을 돌려주므로 CI 에 걸 수 있다.
+
+```bash
+# 규칙 기반 fallback 기준선 — 모델을 만들기 전에 이 숫자를 기록해 둘 것
+python scripts/eval_classifier.py --data data/synthetic_complaints.jsonl
+
+# 실제 LLM 수준의 신뢰도를 가정해 게이트 방어력만 보기
+python scripts/eval_classifier.py --data ... --confidence 0.95
+
+# CI 용 — 위험 민원 자동응대가 1건이라도 있으면 실패
+python scripts/eval_classifier.py --data ... --max-unsafe 0
+```
+
+새 모델(파인튜닝 등)을 만들면 `classify()` 구현만 갈아끼우고 같은 명령으로 비교한다.
+기준선을 못 넘으면 만든 의미가 없다.
+
 ## 유사 사례 검색 (F5)
 
 `complaint_cases` + `case_embeddings`(pgvector) 를 코사인 거리로 검색해 F4 초안
