@@ -13,6 +13,9 @@
 그래서 통과(오차단 방지) 케이스를 차단 케이스보다 촘촘히 고정한다.
 
     cd backend && pytest
+
+일부 케이스는 seongyun311 의 `test/content-filter` 브랜치(41fded6)에서 가져왔다.
+같은 파일을 각각 작성해 겹쳤으므로, 그쪽 케이스 중 여기에 없던 것을 흡수했다.
 """
 
 import pytest
@@ -59,6 +62,15 @@ ORDINARY_COMPLAINTS = [
     "현장학습 동의서 제출 기한을 문의드립니다.",
     "담임 선생님과 상담 예약을 하고 싶습니다.",
     "아이가 요즘 학교 생활을 힘들어해서 걱정입니다. 조언을 구합니다.",
+    "안녕하세요. 급식 관련해서 문의드립니다.",
+]
+
+# 불만·답답함은 드러나지만 욕설·위협이 아닌 민원. F3 는 감정이 아니라 표현을 본다.
+# (F2 위험 탐지가 감정을 다루고, F3 는 차단만 판정한다)
+FRUSTRATED_BUT_CIVIL = [
+    "계속 답변이 늦어서 조금 답답합니다. 확인 부탁드려요.",
+    "여러 번 문의드렸는데 회신이 없어 답답합니다. 언제 답을 받을 수 있을까요?",
+    "이런 방식은 납득하기 어렵습니다. 재검토를 요청합니다.",
 ]
 
 
@@ -70,6 +82,7 @@ ORDINARY_COMPLAINTS = [
         *FACILITY_COMPLAINTS,
         *MEDICAL_COMPLAINTS,
         *ORDINARY_COMPLAINTS,
+        *FRUSTRATED_BUT_CIVIL,
     ],
 )
 def test_정당한_민원은_차단되지_않는다(text):
