@@ -184,8 +184,17 @@ INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 자동 
 cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 함수 테스트
 ```
 
-현재 `tests/test_gate.py`(자동 응대 게이트) 24건이 전부다. F3 필터 회귀 테스트가
-다음 우선순위 — 필터는 오차단이 곧 사고이므로 패턴을 고칠 때 안전망이 필요하다.
+| 파일 | 건수 | 대상 |
+|------|------|------|
+| `tests/test_gate.py` | 30 | 자동 응대 게이트 |
+| `tests/test_content_filter.py` | 68 | F3 욕설·위협 필터 |
+
+**F3 패턴을 넓히기 전에 `tests/test_content_filter.py` 를 먼저 읽을 것.**
+폭력을 *신고하는* 민원은 가해 표현과 어휘가 겹쳐서("친구가 아이를 때려서 다쳤습니다"),
+어휘 하나만 보고 차단하면 학교폭력 신고가 교사에게 가지 못하고 사라진다.
+그래서 통과(오차단 방지) 케이스를 차단 케이스보다 촘촘히 고정해 두었다.
+
+API 라우트·워커 테스트는 아직 없다.
 (전체 현황은 [`docs/development-status.md`](../docs/development-status.md) 참고)
 
 ## 유사 사례 검색 (F5)
