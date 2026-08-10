@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,10 +23,13 @@ from app.services.ai import (
     analyze_risk,
     classify,
     draft_answer,
+    evaluate_auto_answer,
     filter_content,
     route_teacher,
     search_similar_cases,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/complaints", tags=["complaints"])
 
@@ -43,10 +48,14 @@ def _max_risk(a: str, b: str) -> str:
 def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
     """학부모 민원 접수 → AI 게이트웨이 파이프라인.
 
-    F3(욕설·위협 필터) → F1(분류) → F2(위험) → 라우팅 순으로 태운 뒤 상태를 정한다.
+    F3(욕설·위협 필터) → F1(분류) → F2(위험) → 자동응대 게이트 → 라우팅 순으로
+    태운 뒤 상태를 정한다.
     - 욕설·위협 차단: 교사 미노출, 원문을 증거로 보관(status=filtered_blocked).
-    - 단순 행정: 챗봇 자동 응대 후보(status=auto_answered).
-    - 그 외 정당한 민원: 담당 교사 자동 배정(status=pending_teacher).
+    - 단순 행정 + 게이트 통과: 챗봇 자동 응대 후보(status=auto_answered).
+    - 그 외 전부: 담당 교사 자동 배정(status=pending_teacher).
+
+    게이트를 통과하지 못한 단순 행정도 교사에게 간다 — AI 판단이 틀렸을 때
+    민원이 사라지는 것보다 교사가 한 번 더 보는 편이 낫다(services/ai/gate.py).
     분류·위험 결과는 이력 테이블에 함께 남긴다.
     """
     body = payload.body
@@ -54,6 +63,9 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
     filter_result = filter_content(body)       # F3
     classification = classify(body)            # F1
     risk_result = analyze_risk(body)           # F2
+    gate = evaluate_auto_answer(               # 자동 응대 안전장치
+        body, classification.category, classification.confidence, risk_result.risk
+    )
 
     complaint = Complaint(
         school_id=payload.school_id,
@@ -70,14 +82,17 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
         complaint.status = "filtered_blocked"
         complaint.filtered = True
         complaint.risk = _max_risk(complaint.risk, filter_result.severity)
-    elif classification.category == "administrative":
-        # 단순 행정 → 챗봇 자동 응대 후보
+    elif gate.can_auto_answer:
+        # 단순 행정 + 게이트 통과 → 챗봇 자동 응대 후보
         complaint.status = "auto_answered"
         complaint.is_auto_handled = True
     else:
-        # 정당한 민원 → 담당 교사 자동 배정
+        # 게이트 미통과분 포함 → 담당 교사 자동 배정
         complaint.status = "pending_teacher"
         complaint.assigned_teacher_id = route_teacher(db, payload.student_id)
+        if classification.category == "administrative":
+            # 자동 응대될 수 있었으나 안전장치가 막은 건 — 임계값 조정 근거로 남긴다.
+            logger.info("자동 응대 보류 → 교사 배정: %s", gate.reason)
 
     db.add(complaint)
     db.flush()  # complaint.id 확보 (자식 레코드 FK용)

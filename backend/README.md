@@ -137,18 +137,123 @@ app/
 `routes/complaints.create_complaint` 가 게이트웨이 파이프라인을 태운다:
 
 ```
-F3 욕설·위협 필터 → F1 분류 → F2 위험 → 상태 결정 + 라우팅 + 이력 영속화
+F3 욕설·위협 필터 → F1 분류 → F2 위험 → 자동응대 게이트 → 라우팅 + 이력 영속화
 ```
 
 | 결과 | status | 처리 |
 |------|--------|------|
 | 욕설·위협 감지 | `filtered_blocked` | 교사 미노출, 원문을 `content_filter_logs.raw_evidence` 로 증거 보관 |
-| 단순 행정 | `auto_answered` | 챗봇 자동 응대 후보 |
-| 그 외 정당한 민원 | `pending_teacher` | `teacher_assignments` 기반 담당 교사 자동 배정 |
+| 단순 행정 + 게이트 통과 | `auto_answered` | 챗봇 자동 응대 후보 |
+| 그 외 전부 (게이트 보류 포함) | `pending_teacher` | `teacher_assignments` 기반 담당 교사 자동 배정 |
 
 - **F3**(`services/ai/content_filter.py`)는 증거·법적 대응을 위해 **결정론적 규칙 기반**(정규식). LLM 확률 판단에 맡기지 않음.
 - **F2**(`services/ai/risk.py`)는 Claude + 키워드 휴리스틱 fallback.
 - 분류·위험 결과는 `classifications` / `risk_analyses` 이력 테이블에 남고, `GET /api/complaints/{id}`(admin·mdt만 차단 건 열람) 로 조회.
+
+### 자동 응대 게이트 (`services/ai/gate.py`)
+
+'단순 행정'이라는 AI 판단만으로 자동 응대해도 되는지 한 번 더 검사한다.
+오분류 비용이 비대칭이기 때문 — 학교폭력 민원이 단순 행정으로 오분류되면
+자동 응대되고 **교사에게 영원히 가지 않는다.** 반대 방향 오류는 교사가 한 번 더 볼 뿐이다.
+
+네 조건을 **모두** 통과해야 자동 응대한다:
+
+1. 단순 행정으로 분류됨
+2. 자동 응대 금지 신호 없음 — 학폭·자해·성 관련·학대 키워드 (결정론적 안전망)
+3. 위험도가 `high`/`critical` 아님 (F2 교차 검증)
+4. 분류 신뢰도 ≥ `AUTO_ANSWER_MIN_CONFIDENCE` (기본 0.7)
+
+2번을 규칙 기반으로 둔 이유는 F3와 같다. 게다가 F2는 *공격성*을 보므로 차분하게
+서술된 심각한 사안은 위험도가 낮게 나온다 — "아이가 자해를 해서 상담 서류를
+신청하고 싶습니다"는 F1이 `administrative`, F2가 `low`로 보지만 2번이 막는다.
+
+> ⚠️ **기본값에서는 fallback 분류기(신뢰도 0.4)로 자동 응대가 발생하지 않는다.**
+> 키워드 매칭만으로 자동 응대하지 않겠다는 의도된 동작이다. 데모에서 자동 응대를
+> 보여줘야 하면 `AUTO_ANSWER_MIN_CONFIDENCE=0.3` 으로 낮춘다.
+
+보류된 건은 근거와 함께 로그에 남는다 (임계값 조정의 유일한 근거):
+
+```
+INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 분류 신뢰도 부족(0.40 < 0.70)
+INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 자동 응대 금지 신호 감지: 자해
+```
+
+## 테스트
+
+```bash
+cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 함수 테스트
+```
+
+| 파일 | 건수 | 대상 |
+|------|------|------|
+| `tests/test_gate.py` | 30 | 자동 응대 게이트 |
+| `tests/test_content_filter.py` | 68 | F3 욕설·위협 필터 |
+
+**F3 패턴을 넓히기 전에 `tests/test_content_filter.py` 를 먼저 읽을 것.**
+폭력을 *신고하는* 민원은 가해 표현과 어휘가 겹쳐서("친구가 아이를 때려서 다쳤습니다"),
+어휘 하나만 보고 차단하면 학교폭력 신고가 교사에게 가지 못하고 사라진다.
+그래서 통과(오차단 방지) 케이스를 차단 케이스보다 촘촘히 고정해 두었다.
+
+API 라우트·워커 테스트는 아직 없다.
+(전체 현황은 [`docs/development-status.md`](../docs/development-status.md) 참고)
+
+## 합성 민원 데이터 생성 (F1 학습·평가용)
+
+학교 민원 분류는 이 프로젝트 고유 과제라 공개 라벨 데이터가 없다. 로컬 LLM 으로
+카테고리별 민원을 생성해 초기 라벨 데이터를 만든다. 표준 라이브러리만 쓰므로
+백엔드 venv 없이도 돌아간다.
+
+```bash
+ollama serve                                    # 별도 터미널
+python scripts/gen_synthetic_complaints.py --count 30 --model gemma3:4b
+
+# 평가셋 분리 + F3 오차단 측정까지
+python scripts/gen_synthetic_complaints.py --count 30 --eval-ratio 0.2 --check-filter
+```
+
+주요 옵션: `--model` `--base-url`(OpenAI 호환) `--batch` `--categories` `--eval-ratio`.
+출력은 `data/`(gitignore) 아래 JSONL. 분할은 본문 해시 기반이라 재실행해도
+같은 문장이 같은 쪽(train/eval)에 간다.
+
+**설계상 주의 — 프롬프트에서 라벨이 오기 때문에 모델이 주제를 벗어나면 오라벨이 된다.**
+실제로 gemma3:4b 가 `violence_dispute` 프롬프트에 "학습 부진 상담"을 만든 적이 있다.
+그래서 생성 후 카테고리별 필수 신호를 검사해 주제 이탈을 버리고, 프롬프트 지시문이
+본문에 새어 들어온 것도 거른다(둘 다 실제로 발생했던 오염이다).
+
+`--check-filter` 는 생성된 **정당한** 민원이 F3 에 차단되는지 측정한다. 합성 데이터는
+정의상 전부 정당하므로 차단되면 그게 곧 오차단이고, F3 패턴을 고칠 때 회귀 지표가 된다.
+
+> ⚠️ 합성 데이터는 실제 민원과 분포가 다르다(더 정제되고 오타·비문이 적다).
+> 모든 레코드에 `source="synthetic"` 이 박히며, **학습 전 표본 검수는 필수**다.
+> 실제 민원이 쌓이는 대로 재학습·재평가해야 한다.
+
+## F1 분류기 평가 (scripts/eval_classifier.py)
+
+**정확도만 보면 안 된다.** 전체 정확도 95%인 분류기가 학교폭력 민원만 골라서 틀리면
+최악이고, 80%여도 위험한 민원을 놓치지 않으면 훨씬 낫다. 그래서 세 층으로 보고한다.
+
+| 층 | 내용 |
+|----|------|
+| 1. 일반 지표 | 카테고리별 정밀도·재현율·F1, macro F1, 혼동행렬 |
+| 2. **치명 오류** | 학교폭력·분쟁을 `administrative` 로 예측한 비율 — 이 경로만이 자동 응대로 이어진다 |
+| 3. **최종 안전** | 분류기 + 자동응대 게이트를 통과시켜, 실제로 자동 응대될 위험 민원 건수 |
+
+2번이 0이 아니어도 3번이 0이면 게이트가 막아준 것이다. **3번이 0이 아니면 배포하면
+안 된다.** `--max-unsafe` 로 임계값을 넘으면 종료코드 1을 돌려주므로 CI 에 걸 수 있다.
+
+```bash
+# 규칙 기반 fallback 기준선 — 모델을 만들기 전에 이 숫자를 기록해 둘 것
+python scripts/eval_classifier.py --data data/synthetic_complaints.jsonl
+
+# 실제 LLM 수준의 신뢰도를 가정해 게이트 방어력만 보기
+python scripts/eval_classifier.py --data ... --confidence 0.95
+
+# CI 용 — 위험 민원 자동응대가 1건이라도 있으면 실패
+python scripts/eval_classifier.py --data ... --max-unsafe 0
+```
+
+새 모델(파인튜닝 등)을 만들면 `classify()` 구현만 갈아끼우고 같은 명령으로 비교한다.
+기준선을 못 넘으면 만든 의미가 없다.
 
 ## 유사 사례 검색 (F5)
 
@@ -206,7 +311,15 @@ F3 욕설·위협 필터 → F1 분류 → F2 위험 → 상태 결정 + 라우�
 - [x] ~~역할별 권한 세분화 (라우트 가드)~~
 - [x] ~~F8 이관(escalations): 교사 → MDT/관리자 이관 엔드포인트~~
 - [x] ~~Celery + Redis 워커 (STT 변환·배치 분석)~~
+- [x] ~~AI 서비스 단위 테스트 (필터 오차단 회귀 방지)~~ — 149건, `pytest`
+- [x] ~~자동 응대 게이트: 신뢰도·위험도·안전 키워드 교차 검증~~
+- [x] ~~F1 학습·평가 기반: 합성 데이터 생성기 + 평가 하네스 + 기준선~~
+- [ ] **API 라우트·워커 테스트** (`TestClient` + 테스트 DB) — 안전 판정 경로는
+      덮였으나 라우트·권한·워커는 아직 일회성 스크립트로만 검증
 - [ ] Alembic 마이그레이션 도입 (`alembic init`) — 운영 전환 전 필수
-- [ ] F6 안심번호·예약 상담 (통신사/제3자 가상번호 연동)
 - [ ] `audit_logs` 기록: 증거·녹음 열람 추적
-- [ ] AI 서비스 단위 테스트 (필터 오차단 회귀 방지)
+- [ ] 챗봇 자동 응대 실체화 (`complaint_messages`) — 지금은 `auto_answered` 상태만
+      기록되고 실제 응대 문구가 남지 않는다
+- [ ] 학부모 동선: 접수 시 `parent_id` 연결 + 본인 민원 조회
+- [ ] F6 안심번호·예약 상담 (통신사/제3자 가상번호 연동)
+- [ ] `violence_dispute` 평가 표본 확대 후 기준선 재측정 (현재 3건, 재현율 0.333)
