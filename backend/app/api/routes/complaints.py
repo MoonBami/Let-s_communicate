@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
@@ -69,6 +69,7 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
 
     complaint = Complaint(
         school_id=payload.school_id,
+        parent_id=payload.parent_id,
         student_id=payload.student_id,
         channel=payload.channel,
         title=payload.title,

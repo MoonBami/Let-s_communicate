@@ -17,6 +17,7 @@ class ChannelEnum(str, Enum):
 
 class ComplaintCreate(CamelModel):
     school_id: uuid.UUID
+    parent_id: uuid.UUID | None = None
     student_id: uuid.UUID | None = None
     channel: ChannelEnum = ChannelEnum.web_form
     title: str | None = None
