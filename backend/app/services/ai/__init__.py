@@ -1,6 +1,7 @@
 from app.services.ai.classifier import ClassificationResult, classify  # noqa: F401
 from app.services.ai.content_filter import FilterResult, filter_content  # noqa: F401
 from app.services.ai.drafter import draft_answer  # noqa: F401
+from app.services.ai.gate import GateDecision, evaluate_auto_answer  # noqa: F401
 from app.services.ai.embedding import embed  # noqa: F401
 from app.services.ai.retriever import (  # noqa: F401
     SimilarCase,

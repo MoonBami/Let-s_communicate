@@ -27,9 +27,13 @@ SYSTEM_PROMPT = """너는 학교 민원을 분류하는 보조 시스템이다.
 출력 형식(JSON만): {"category": "<카테고리>", "confidence": <0~1>, "reason": "<간단한 근거>"}
 """
 
+# 학교폭력·분쟁 신호. gate.py 의 '자동 응대 금지' 판정도 이 목록을 공유한다
+# (같은 신호를 두 곳에서 따로 관리하면 한쪽만 갱신되는 사고가 난다).
+VIOLENCE_KEYWORDS = ["폭력", "때리", "괴롭", "학폭", "협박", "싸움"]
+
 # 데이터가 없을 때 쓰는 아주 단순한 키워드 규칙(fallback)
 _KEYWORDS = {
-    "violence_dispute": ["폭력", "때리", "괴롭", "학폭", "협박", "싸움"],
+    "violence_dispute": VIOLENCE_KEYWORDS,
     "grades": ["성적", "점수", "등급", "시험", "채점"],
     "administrative": ["서류", "급식", "일정", "준비물", "증명서", "신청"],
     "learning": ["수업", "학습", "숙제", "진도", "과제"],

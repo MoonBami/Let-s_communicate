@@ -137,18 +137,56 @@ app/
 `routes/complaints.create_complaint` 가 게이트웨이 파이프라인을 태운다:
 
 ```
-F3 욕설·위협 필터 → F1 분류 → F2 위험 → 상태 결정 + 라우팅 + 이력 영속화
+F3 욕설·위협 필터 → F1 분류 → F2 위험 → 자동응대 게이트 → 라우팅 + 이력 영속화
 ```
 
 | 결과 | status | 처리 |
 |------|--------|------|
 | 욕설·위협 감지 | `filtered_blocked` | 교사 미노출, 원문을 `content_filter_logs.raw_evidence` 로 증거 보관 |
-| 단순 행정 | `auto_answered` | 챗봇 자동 응대 후보 |
-| 그 외 정당한 민원 | `pending_teacher` | `teacher_assignments` 기반 담당 교사 자동 배정 |
+| 단순 행정 + 게이트 통과 | `auto_answered` | 챗봇 자동 응대 후보 |
+| 그 외 전부 (게이트 보류 포함) | `pending_teacher` | `teacher_assignments` 기반 담당 교사 자동 배정 |
 
 - **F3**(`services/ai/content_filter.py`)는 증거·법적 대응을 위해 **결정론적 규칙 기반**(정규식). LLM 확률 판단에 맡기지 않음.
 - **F2**(`services/ai/risk.py`)는 Claude + 키워드 휴리스틱 fallback.
 - 분류·위험 결과는 `classifications` / `risk_analyses` 이력 테이블에 남고, `GET /api/complaints/{id}`(admin·mdt만 차단 건 열람) 로 조회.
+
+### 자동 응대 게이트 (`services/ai/gate.py`)
+
+'단순 행정'이라는 AI 판단만으로 자동 응대해도 되는지 한 번 더 검사한다.
+오분류 비용이 비대칭이기 때문 — 학교폭력 민원이 단순 행정으로 오분류되면
+자동 응대되고 **교사에게 영원히 가지 않는다.** 반대 방향 오류는 교사가 한 번 더 볼 뿐이다.
+
+네 조건을 **모두** 통과해야 자동 응대한다:
+
+1. 단순 행정으로 분류됨
+2. 자동 응대 금지 신호 없음 — 학폭·자해·성 관련·학대 키워드 (결정론적 안전망)
+3. 위험도가 `high`/`critical` 아님 (F2 교차 검증)
+4. 분류 신뢰도 ≥ `AUTO_ANSWER_MIN_CONFIDENCE` (기본 0.7)
+
+2번을 규칙 기반으로 둔 이유는 F3와 같다. 게다가 F2는 *공격성*을 보므로 차분하게
+서술된 심각한 사안은 위험도가 낮게 나온다 — "아이가 자해를 해서 상담 서류를
+신청하고 싶습니다"는 F1이 `administrative`, F2가 `low`로 보지만 2번이 막는다.
+
+> ⚠️ **기본값에서는 fallback 분류기(신뢰도 0.4)로 자동 응대가 발생하지 않는다.**
+> 키워드 매칭만으로 자동 응대하지 않겠다는 의도된 동작이다. 데모에서 자동 응대를
+> 보여줘야 하면 `AUTO_ANSWER_MIN_CONFIDENCE=0.3` 으로 낮춘다.
+
+보류된 건은 근거와 함께 로그에 남는다 (임계값 조정의 유일한 근거):
+
+```
+INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 분류 신뢰도 부족(0.40 < 0.70)
+INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 자동 응대 금지 신호 감지: 자해
+```
+
+## 테스트
+
+```bash
+cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 함수 테스트
+```
+
+현재 `tests/test_gate.py`(자동 응대 게이트) 24건이 전부다. F3 필터 회귀 테스트가
+다음 우선순위 — 필터는 오차단이 곧 사고이므로 패턴을 고칠 때 안전망이 필요하다.
+(전체 현황은 [`docs/development-status.md`](../docs/development-status.md) 참고)
 
 ## 유사 사례 검색 (F5)
 
