@@ -1,15 +1,24 @@
-import uuid
+﻿import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import Field, field_validator
 
 from app.schemas.base import CamelModel
 
 
+class ChannelEnum(str, Enum):
+    """민원 접수 경로. DB enum(complaint_channel)과 값이 일치해야 한다."""
+
+    web_form = "web_form"
+    chat = "chat"
+    call = "call"
+
+
 class ComplaintCreate(CamelModel):
     school_id: uuid.UUID
     student_id: uuid.UUID | None = None
-    channel: str = "web_form"
+    channel: ChannelEnum = ChannelEnum.web_form
     title: str | None = None
     body: str = Field(min_length=1)
 
