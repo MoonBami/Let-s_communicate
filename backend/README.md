@@ -197,6 +197,36 @@ cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 �
 API 라우트·워커 테스트는 아직 없다.
 (전체 현황은 [`docs/development-status.md`](../docs/development-status.md) 참고)
 
+## 합성 민원 데이터 생성 (F1 학습·평가용)
+
+학교 민원 분류는 이 프로젝트 고유 과제라 공개 라벨 데이터가 없다. 로컬 LLM 으로
+카테고리별 민원을 생성해 초기 라벨 데이터를 만든다. 표준 라이브러리만 쓰므로
+백엔드 venv 없이도 돌아간다.
+
+```bash
+ollama serve                                    # 별도 터미널
+python scripts/gen_synthetic_complaints.py --count 30 --model gemma3:4b
+
+# 평가셋 분리 + F3 오차단 측정까지
+python scripts/gen_synthetic_complaints.py --count 30 --eval-ratio 0.2 --check-filter
+```
+
+주요 옵션: `--model` `--base-url`(OpenAI 호환) `--batch` `--categories` `--eval-ratio`.
+출력은 `data/`(gitignore) 아래 JSONL. 분할은 본문 해시 기반이라 재실행해도
+같은 문장이 같은 쪽(train/eval)에 간다.
+
+**설계상 주의 — 프롬프트에서 라벨이 오기 때문에 모델이 주제를 벗어나면 오라벨이 된다.**
+실제로 gemma3:4b 가 `violence_dispute` 프롬프트에 "학습 부진 상담"을 만든 적이 있다.
+그래서 생성 후 카테고리별 필수 신호를 검사해 주제 이탈을 버리고, 프롬프트 지시문이
+본문에 새어 들어온 것도 거른다(둘 다 실제로 발생했던 오염이다).
+
+`--check-filter` 는 생성된 **정당한** 민원이 F3 에 차단되는지 측정한다. 합성 데이터는
+정의상 전부 정당하므로 차단되면 그게 곧 오차단이고, F3 패턴을 고칠 때 회귀 지표가 된다.
+
+> ⚠️ 합성 데이터는 실제 민원과 분포가 다르다(더 정제되고 오타·비문이 적다).
+> 모든 레코드에 `source="synthetic"` 이 박히며, **학습 전 표본 검수는 필수**다.
+> 실제 민원이 쌓이는 대로 재학습·재평가해야 한다.
+
 ## 유사 사례 검색 (F5)
 
 `complaint_cases` + `case_embeddings`(pgvector) 를 코사인 거리로 검색해 F4 초안

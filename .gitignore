@@ -31,3 +31,7 @@ celerybeat.pid
 
 # Uploads / recordings (local dev)
 backend/uploads/
+
+# 생성된 합성 데이터 (재생성 가능 · 사람 검수 전 상태)
+# 검수를 마친 평가셋을 커밋하려면 git add -f 로 명시적으로 추가할 것.
+backend/data/
