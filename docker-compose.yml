@@ -34,8 +34,14 @@ services:
     image: redis:7
     container_name: sotong-redis
     restart: unless-stopped
+    # AOF(Append Only File) 켜서 큐에 쌓인 작업이 컨테이너 재시작에도
+    # 살아남게 함. 기본 설정(스냅샷만)이면 마지막 저장 시점 이후 대기 중이던
+    # 작업이 재시작 시 유실될 수 있음.
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - sotong-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -77,6 +83,10 @@ services:
     volumes:
       - ./backend:/app
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "--loglevel=info"]
+    # backend와 같은 이미지를 쓰지만 8000번에 웹서버를 안 띄우므로
+    # Dockerfile에 박힌 HTTP 헬스체크(curl localhost:8000/health)는 여기선 의미 없음 → 끔.
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
@@ -96,6 +106,8 @@ services:
     volumes:
       - ./backend:/app
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat", "--loglevel=info"]
+    healthcheck:
+      disable: true
     depends_on:
       db:
         condition: service_healthy
@@ -120,5 +132,6 @@ services:
 
 volumes:
   sotong-db-data:
+  sotong-redis-data:
   web-node-modules:
   web-app-node-modules:
