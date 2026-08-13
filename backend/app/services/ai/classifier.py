@@ -5,11 +5,10 @@ JSON을 받아 파싱하는 방식. 키가 없으면 키워드 규칙 기반 fal
 데이터가 쌓이면 이 인터페이스를 유지한 채 KoELECTRA 등으로 교체 가능.
 """
 
-import json
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.services.ai.client import get_anthropic
+from app.services.ai.client import call_claude_json
 
 CATEGORIES = ["administrative", "learning", "life", "grades", "violence_dispute", "other"]
 
@@ -58,30 +57,28 @@ class ClassificationResult:
 
 
 def classify(text: str) -> ClassificationResult:
-    client = get_anthropic()
-    if client is None:
+    data = call_claude_json(
+        system=SYSTEM_PROMPT,
+        user_content=text,
+        model=settings.ai_classify_model,
+        max_tokens=256,
+        caller="F1.classifier",
+    )
+    if data is None:
         return _fallback(text)
 
+    category = data.get("category", "other")
+    if category not in CATEGORIES:
+        category = "other"
     try:
-        msg = client.messages.create(
-            model=settings.ai_classify_model,
-            max_tokens=256,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
-        raw = msg.content[0].text  # type: ignore[attr-defined]
-        data = json.loads(raw)
-        category = data.get("category", "other")
-        if category not in CATEGORIES:
-            category = "other"
         return ClassificationResult(
             category=category,
             confidence=float(data.get("confidence", 0.5)),
             model_name=settings.ai_classify_model,
-            reason=data.get("reason", ""),
+            reason=str(data.get("reason", "")),
         )
-    except Exception:
-        # 파싱/네트워크 실패 시에도 서비스가 죽지 않도록 fallback
+    except (TypeError, ValueError):
+        # confidence 필드가 숫자가 아닌 등 응답 스키마 위반 — fallback으로.
         return _fallback(text)
 
 
