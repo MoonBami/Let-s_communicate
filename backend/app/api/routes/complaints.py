@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import can_view_filtered, get_current_user, load_visible_complaint, require_roles
+from app.api.deps import (
+    can_view_filtered,
+    get_current_user_optional,
+    load_visible_complaint,
+    require_roles,
+    resolve_parent_id,
+)
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
@@ -33,8 +39,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/complaints", tags=["complaints"])
 
-# 민원을 다루는 내부 사용자 — 학부모는 접수만 하고 민원함·상세엔 접근하지 않는다.
+# 민원을 다루는 내부 사용자 — 학부모는 교사 민원함·상세엔 접근하지 않는다.
 staff_only = require_roles("teacher", "admin", "mdt")
+
+# 학부모 본인 민원함 전용. 교직원은 staff_only 경로로 조회하므로 여기 올 이유가 없고,
+# 열어두면 "본인 것만 보이는 화면"의 대상 범위가 흐려진다.
+parent_only = require_roles("parent")
 
 # 위험도 순서 — 필터 심각도와 위험 분석 결과 중 높은 쪽을 채택할 때 사용.
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -45,8 +55,16 @@ def _max_risk(a: str, b: str) -> str:
 
 
 @router.post("", response_model=ComplaintOut, status_code=status.HTTP_201_CREATED)
-def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
+def create_complaint(
+    payload: ComplaintCreate,
+    db: Session = Depends(get_db),
+    current: User | None = Depends(get_current_user_optional),
+):
     """학부모 민원 접수 → AI 게이트웨이 파이프라인.
+
+    로그인 없이도 접수할 수 있다(학부모에게 앱·로그인을 강제하지 않는 설계).
+    로그인한 학부모의 접수만 본인에게 귀속되며, **귀속 대상은 토큰에서만
+    결정한다** — 요청 본문으로 받으면 남의 명의로 민원을 넣을 수 있다.
 
     F3(욕설·위협 필터) → F1(분류) → F2(위험) → 자동응대 게이트 → 라우팅 순으로
     태운 뒤 상태를 정한다.
@@ -69,7 +87,7 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
 
     complaint = Complaint(
         school_id=payload.school_id,
-        parent_id=payload.parent_id,
+        parent_id=resolve_parent_id(current),  # 본문이 아니라 토큰에서
         student_id=payload.student_id,
         channel=payload.channel,
         title=payload.title,
@@ -138,9 +156,14 @@ def list_my_complaints(
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
+    current: User = Depends(parent_only),
 ):
-    """학부모 본인 민원함 - parent_id가 본인인 민원만. 차단 민원은 제외."""
+    """학부모 본인 민원함 — `parent_id` 가 본인인 민원만. 차단 민원은 제외.
+
+    귀속은 접수 시 토큰에서 결정되므로(`deps.resolve_parent_id`) 여기 보이는
+    민원은 본인이 로그인 상태로 접수한 것뿐이다. 비로그인 접수는 익명이라
+    여기 나타나지 않는다.
+    """
     stmt = select(Complaint).where(
         Complaint.parent_id == current.id,
         Complaint.filtered.is_(False),

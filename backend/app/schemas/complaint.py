@@ -16,8 +16,14 @@ class ChannelEnum(str, Enum):
 
 
 class ComplaintCreate(CamelModel):
+    """민원 접수 입력.
+
+    `parent_id` 는 **의도적으로 없다.** 접수 경로는 인증이 없으므로 본문의
+    값을 신뢰하면 제3자가 임의의 학부모 명의로 민원을 넣을 수 있다.
+    접수자 귀속은 서버가 토큰에서 결정한다(`deps.resolve_parent_id`).
+    """
+
     school_id: uuid.UUID
-    parent_id: uuid.UUID | None = None
     student_id: uuid.UUID | None = None
     channel: ChannelEnum = ChannelEnum.web_form
     title: str | None = None

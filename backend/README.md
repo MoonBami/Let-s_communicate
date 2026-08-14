@@ -109,8 +109,9 @@ app/
 | `POST /api/auth/signup` | 교사·관리자 회원가입 → 토큰 발급 | 공개 |
 | `POST /api/auth/login` | 로그인 → 토큰 발급 | 공개 |
 | `GET /api/auth/me` | 내 정보 | 로그인 |
-| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→라우팅) | 공개 |
-| `GET /api/complaints` | 교사 민원함 (필터 통과분, 교사면 본인 배정) | teacher·admin·mdt |
+| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→게이트→라우팅) | 공개 (로그인 시 본인 귀속) |
+| `GET /api/complaints/mine` | 학부모 본인 민원함 | parent |
+| `GET /api/complaints` | 민원 목록 (교사=본인 배정·필터 통과분 / admin·mdt=차단 건 포함 전체) | teacher·admin·mdt |
 | `GET /api/complaints/{id}` | 민원 상세 | teacher(본인 배정)·admin·mdt |
 | `GET /api/complaints/{id}/similar-cases` | F5 유사 사례 검색 | teacher·admin·mdt |
 | `POST /api/complaints/{id}/draft` | F4 답변 초안 생성 (F5 사례 주입) | teacher·admin·mdt |
@@ -129,8 +130,17 @@ app/
 
 - 토큰의 `role` 클레임이 아니라 **DB 의 현재 역할**로 판정한다 (발급 후 역할 변경·정지 반영).
 - 차단된 민원(`filtered=true`, 증거)은 **admin·mdt 만** 열람 가능.
+  목록·상세가 `deps.can_view_filtered()` 라는 **같은 규칙**을 쓴다 — 한쪽만 허용하면
+  관리자가 증거에 도달할 화면이 없어진다(실제로 그랬다).
 - 교사는 **본인에게 배정된 민원만** 상세·초안·이관 요청 가능.
-- 학부모는 접수만 하고 민원함·상세엔 접근하지 않는다.
+- 학부모는 교사 민원함·상세엔 접근할 수 없고, `GET /api/complaints/mine` 으로
+  **본인 민원만** 조회한다.
+
+> ⚠️ **접수자 귀속은 토큰에서만 결정한다**(`deps.resolve_parent_id`).
+> 접수 경로는 인증이 없으므로(학부모에게 로그인을 강제하지 않는 설계) 요청 본문의
+> `parentId` 를 신뢰하면 **제3자가 임의의 학부모 명의로 민원을 넣을 수 있다.**
+> 그래서 `ComplaintCreate` 에는 `parent_id` 필드가 아예 없다. 비로그인 접수는
+> 익명(`parent_id=None`)으로 남는다.
 
 ## 접수 파이프라인 (F1~F3 + 라우팅)
 
@@ -186,8 +196,15 @@ cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 �
 
 | 파일 | 건수 | 대상 |
 |------|------|------|
+| `tests/test_content_filter.py` | 72 | F3 욕설·위협 필터 |
+| `tests/test_synthetic_gen.py` | 32 | 합성 데이터 생성기 |
 | `tests/test_gate.py` | 30 | 자동 응대 게이트 |
-| `tests/test_content_filter.py` | 68 | F3 욕설·위협 필터 |
+| `tests/test_eval_classifier.py` | 15 | 평가 하네스 지표 계산 |
+| `tests/test_parent_flow.py` | 9 | 민원 접수자 귀속 정책 |
+| `tests/test_visibility.py` | 7 | 차단 민원(증거) 열람 권한 |
+| `tests/test_parent_mine.py` | 10 | `/mine` 라우트 등록·순서·역할 배선 |
+
+CI(`.github/workflows/ci.yml`)가 PR·push 마다 실행한다.
 
 **F3 패턴을 넓히기 전에 `tests/test_content_filter.py` 를 먼저 읽을 것.**
 폭력을 *신고하는* 민원은 가해 표현과 어휘가 겹쳐서("친구가 아이를 때려서 다쳤습니다"),
@@ -311,7 +328,7 @@ python scripts/eval_classifier.py --data ... --max-unsafe 0
 - [x] ~~역할별 권한 세분화 (라우트 가드)~~
 - [x] ~~F8 이관(escalations): 교사 → MDT/관리자 이관 엔드포인트~~
 - [x] ~~Celery + Redis 워커 (STT 변환·배치 분석)~~
-- [x] ~~AI 서비스 단위 테스트 (필터 오차단 회귀 방지)~~ — 149건, `pytest`
+- [x] ~~AI 서비스 단위 테스트 (필터 오차단 회귀 방지)~~ — 175건, `pytest` (CI 에서 자동 실행)
 - [x] ~~자동 응대 게이트: 신뢰도·위험도·안전 키워드 교차 검증~~
 - [x] ~~F1 학습·평가 기반: 합성 데이터 생성기 + 평가 하네스 + 기준선~~
 - [ ] **API 라우트·워커 테스트** (`TestClient` + 테스트 DB) — 안전 판정 경로는
