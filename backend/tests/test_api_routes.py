@@ -300,7 +300,62 @@ def test_사례_등록은_관리자와_MDT_만(client, users, tokens, role, expe
 
 
 # ---------------------------------------------------------------------------
-# 7. 인증
+# 7. 유량 제한 — 인증 없는 접수 경로의 유일한 방어선
+#
+# 카운터 격리는 conftest 의 _isolate_rate_limit(autouse)가 담당한다.
+# 여기서는 한도를 낮춰 실제 429 응답을 확인한다.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def low_limit(monkeypatch):
+    """분당 한도를 3으로 낮춘다(기본 5는 테스트에서 다루기 번거롭다)."""
+    from app.core import rate_limit
+
+    monkeypatch.setattr(rate_limit.settings, "rate_limit_intake_per_minute", 3)
+
+
+def test_짧은_시간에_과다_접수하면_429(client, student, users, low_limit):
+    for i in range(3):
+        assert submit(client).status_code == 201, f"{i + 1}번째가 막혔다"
+
+    blocked = submit(client)
+    assert blocked.status_code == 429
+    assert blocked.headers.get("Retry-After"), "언제 다시 시도할지 알려줘야 한다"
+
+
+def test_한도를_넘으면_민원이_저장되지_않는다(client, student, users, db, low_limit):
+    from app.models.complaint import Complaint
+
+    submit(client)
+    submit(client)
+    submit(client)
+    submit(client)  # 거부
+
+    assert db.query(Complaint).count() == 3, "거부된 요청이 DB 를 채우면 방어가 무의미하다"
+
+
+def test_조회는_유량_제한에_걸리지_않는다(client, users, tokens, low_limit):
+    """제한은 접수(POST)에만 걸린다. 목록 조회까지 막으면 교사 업무가 멈춘다."""
+    for _ in range(6):
+        assert client.get("/api/complaints", headers=tokens["teacher"]).status_code == 200
+
+
+def test_로그인한_학부모는_IP_가_아니라_본인_기준으로_센다(client, student, users, tokens, low_limit):
+    """같은 IP(테스트 클라이언트) 뒤에서도 익명 접수와 카운터가 분리되어야 한다.
+
+    같은 학교 와이파이·NAT 뒤의 학부모들이 서로를 막지 않게 하는 성질이다.
+    """
+    for _ in range(3):
+        submit(client)                      # 익명(IP 키) 한도 소진
+    assert submit(client).status_code == 429
+
+    # 로그인한 학부모는 사용자 키를 쓰므로 아직 여유가 있어야 한다.
+    assert submit(client, headers=tokens["parent"]).status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# 8. 인증
 # ---------------------------------------------------------------------------
 
 

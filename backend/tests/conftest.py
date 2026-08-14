@@ -106,6 +106,26 @@ def engine():
     eng.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_limit(monkeypatch):
+    """유량 제한을 테스트 간에 격리한다.
+
+    카운터는 프로세스 전역이라 초기화하지 않으면 **앞 테스트의 접수 횟수가 누적**되어
+    뒤 테스트가 429 를 받는다. 실제로 그랬다 — 유량 제한과 라우트 테스트가 각각
+    따로는 통과하는데 함께 돌리면 10건이 깨졌다.
+
+    Redis 도 쓰지 않도록 고정한다. 환경에 Redis 가 떠 있으면 카운터가 테스트
+    실행 사이에도 남아 결과가 환경에 따라 달라지기 때문이다.
+    """
+    from app.core import rate_limit
+
+    monkeypatch.setattr(rate_limit, "_redis_counter", None)
+    monkeypatch.setattr(rate_limit, "_redis_checked", True)
+    rate_limit.reset_for_tests()
+    yield
+    rate_limit.reset_for_tests()
+
+
 @pytest.fixture()
 def db(engine) -> Session:
     """테스트 1건용 세션. 시작 전에 모든 테이블을 비운다.

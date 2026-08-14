@@ -1,14 +1,19 @@
+import logging
 import uuid
 from collections.abc import Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
+from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.complaint import Complaint
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
@@ -58,6 +63,51 @@ def get_current_user_optional(
     만들지 않되, **유효하지 않은 토큰을 '로그인한 것'으로 취급하지도 않는다.**
     """
     return _user_from_token(token, db)
+
+
+def client_ip(request: Request) -> str:
+    """요청자 IP.
+
+    `X-Forwarded-For` 는 **설정으로 명시적으로 신뢰할 때만** 본다. 프록시가 없는데
+    믿으면 공격자가 헤더를 위조해 유량 제한 키를 매 요청 바꿔 우회할 수 있다.
+    """
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # 가장 왼쪽이 원 클라이언트. 프록시가 신뢰될 때만 유효하다.
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit_key(request: Request, current: User | None) -> str:
+    """유량 제한 카운터 키.
+
+    로그인한 학부모는 **사용자 id** 로 센다 — IP 로 세면 같은 NAT 뒤의 다른
+    학부모까지 함께 막히기 때문이다. 익명 접수는 IP 밖에 없다.
+    """
+    if current is not None:
+        return f"user:{current.id}"
+    return f"ip:{client_ip(request)}"
+
+
+def enforce_intake_rate_limit(
+    request: Request,
+    current: User | None = Depends(get_current_user_optional),
+) -> None:
+    """민원 접수 유량 제한. 초과하면 429 + Retry-After."""
+    verdict = rate_limit.check(rate_limit_key(request, current), rate_limit.intake_rules())
+    if verdict.allowed:
+        return
+
+    logger.warning(
+        "rate_limit | 접수 거부 key=%s rule=%s retry_after=%ds",
+        rate_limit_key(request, current), verdict.rule, verdict.retry_after,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="짧은 시간에 너무 많이 접수되었습니다. 잠시 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(verdict.retry_after)},
+    )
 
 
 def resolve_parent_id(current: User | None) -> uuid.UUID | None:
