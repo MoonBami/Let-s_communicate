@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (lint + import check)
+    name: Backend (tests + import check)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,10 +41,18 @@ jobs:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/sotonghaeyo
           REDIS_URL: redis://localhost:6379/0
 
-      # 리포에 아직 테스트 스위트가 없음 (docs/development-status.md §6-1 참고).
-      # 테스트가 추가되면 여기에 `pytest` 스텝을 넣는다.
-      # - name: Run tests
-      #   run: pytest
+      - name: Run tests
+        # 안전 판정 경로(F3 욕설·위협 필터, 자동 응대 게이트, 접수자 귀속)의
+        # 회귀를 막는 스위트. DB·Redis·네트워크 없이 도는 순수 함수 테스트라
+        # 서비스 컨테이너가 필요 없다(1초 이내).
+        #
+        # 이 스텝이 빠지면 필터 패턴을 넓히다 정당한 민원을 오차단하거나,
+        # 게이트가 뚫려 학교폭력 민원이 자동 응대되는 회귀를 아무도 못 잡는다.
+        # 실제로 두 사고 모두 이 테스트를 작성하는 과정에서 발견됐다.
+        run: pytest
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/sotonghaeyo
+          REDIS_URL: redis://localhost:6379/0
 
   frontend:
     name: Frontend (typecheck + build)
