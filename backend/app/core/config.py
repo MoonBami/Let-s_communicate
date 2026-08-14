@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     # 자동 응대가 발생하지 않는다 — 키워드 매칭만으로 자동 응대하지 않겠다는 뜻.
     auto_answer_min_confidence: float = 0.7
 
+    # 민원 접수 유량 제한 (services/../core/rate_limit.py)
+    # 분당 한도는 '사람이 넘길 수 없는 수준'으로만 잡아 스크립트를 걸러낸다.
+    # 시간당 한도를 크게 둔 이유: 익명 접수는 IP 로 세는데, 같은 학교 와이파이·
+    # 통신사 NAT 뒤의 학부모들이 IP 를 공유한다. 사건이 터져 여러 학부모가 동시에
+    # 민원을 넣을 때 정당한 민원이 서로를 막으면 안 된다.
+    rate_limit_intake_per_minute: int = 5
+    rate_limit_intake_per_hour: int = 100
+
+    # 프록시(로드밸런서·리버스 프록시) 뒤에 있을 때만 켠다.
+    # 켜면 X-Forwarded-For 를 클라이언트 IP 로 신뢰한다 — 프록시가 없는데 켜면
+    # 공격자가 헤더를 위조해 한도를 무한히 우회할 수 있으므로 기본값은 꺼둔다.
+    trust_proxy_headers: bool = False
+
     # F5 임베딩 — OpenAI 호환 /v1/embeddings. 키가 없으면 해싱 fallback.
     embedding_api_key: str | None = None
     embedding_api_url: str = "https://api.openai.com/v1/embeddings"

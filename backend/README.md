@@ -142,6 +142,34 @@ app/
 > 그래서 `ComplaintCreate` 에는 `parent_id` 필드가 아예 없다. 비로그인 접수는
 > 익명(`parent_id=None`)으로 남는다.
 
+## 유량 제한 (`core/rate_limit.py`)
+
+`POST /api/complaints` 는 인증이 없다(학부모에게 로그인을 강제하지 않는 설계).
+따라서 스크립트로 대량 제출하면 DB 가 차고 교사 민원함이 마비되므로, **유량 제한이
+이 경로의 유일한 방어선**이다. 조회·로그인 등 다른 경로엔 걸리지 않는다.
+
+| 항목 | 기본값 | 조정 |
+|------|--------|------|
+| 분당 | 5회 | `RATE_LIMIT_INTAKE_PER_MINUTE` |
+| 시간당 | 100회 | `RATE_LIMIT_INTAKE_PER_HOUR` |
+
+초과 시 `429` + `Retry-After` 헤더. 카운터는 Redis 를 우선 쓰고(여러 워커·인스턴스가
+공유), 못 붙으면 프로세스 내 카운터로 떨어진다.
+
+이 도메인에 맞춘 판단 세 가지:
+
+- **Redis 가 죽으면 통과시킨다(fail-open).** 막으면 Redis 장애가 곧 '모든 민원 접수
+  중단'이 되어 학교폭력 신고까지 못 들어온다. 가장 비싼 실패는 정당한 민원이
+  사라지는 것이므로(F3 오차단 수정·자동응대 게이트와 같은 기준) 제한이 꺼지는
+  쪽을 택하고 경고를 남긴다.
+- **시간당 한도를 넉넉하게.** 익명 접수는 IP 로 세는데 같은 학교 와이파이·통신사
+  NAT 뒤의 학부모들이 IP 를 공유한다. 사건이 터져 여러 학부모가 동시에 접수할 때
+  정당한 민원이 서로를 막으면 안 된다. **로그인한 학부모는 사용자 id 로 세므로**
+  이 문제가 없다.
+- **`X-Forwarded-For` 는 기본적으로 믿지 않는다.** 프록시가 없는데 신뢰하면 공격자가
+  헤더를 위조해 매 요청 다른 키를 만들어 한도를 무한히 우회한다. 프록시 뒤에
+  배포할 때만 `TRUST_PROXY_HEADERS=true`.
+
 ## 접수 파이프라인 (F1~F3 + 라우팅)
 
 `routes/complaints.create_complaint` 가 게이트웨이 파이프라인을 태운다:
@@ -201,8 +229,10 @@ cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 �
 | `tests/test_gate.py` | 30 | 자동 응대 게이트 |
 | `tests/test_eval_classifier.py` | 15 | 평가 하네스 지표 계산 |
 | `tests/test_parent_flow.py` | 9 | 민원 접수자 귀속 정책 |
-| `tests/test_visibility.py` | 7 | 차단 민원(증거) 열람 권한 |
+| `tests/test_rate_limit.py` | 10 | 접수 유량 제한 정책 |
 | `tests/test_parent_mine.py` | 10 | `/mine` 라우트 등록·순서·역할 배선 |
+| `tests/test_visibility.py` | 7 | 차단 민원(증거) 열람 권한 |
+| | **185** | 합계 |
 
 CI(`.github/workflows/ci.yml`)가 PR·push 마다 실행한다.
 

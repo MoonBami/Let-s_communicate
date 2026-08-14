@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import (
     can_view_filtered,
+    enforce_intake_rate_limit,
     get_current_user_optional,
     load_visible_complaint,
     require_roles,
@@ -54,7 +55,13 @@ def _max_risk(a: str, b: str) -> str:
     return a if _RISK_ORDER.get(a, 0) >= _RISK_ORDER.get(b, 0) else b
 
 
-@router.post("", response_model=ComplaintOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ComplaintOut,
+    status_code=status.HTTP_201_CREATED,
+    # 인증이 없는 공개 엔드포인트라 유량 제한이 유일한 방어선이다.
+    dependencies=[Depends(enforce_intake_rate_limit)],
+)
 def create_complaint(
     payload: ComplaintCreate,
     db: Session = Depends(get_db),

@@ -5,6 +5,11 @@ import { API, type CreateComplaintRequest, type Complaint } from '@sotong/shared
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 
+/** 유량 제한(429)에 걸린 요청인지. 일반 오류와 안내 문구를 달리하기 위해 구분한다. */
+function isRateLimited(error: unknown): boolean {
+  return (error as { response?: { status?: number } })?.response?.status === 429;
+}
+
 // 데모 시드(seed.py)와 맞춘 고정 UUID. 학교·학생 선택 API가 준비되면 제거한다.
 const DEMO_SCHOOL_ID = '11111111-1111-1111-1111-111111111111';
 const DEMO_STUDENT_ID = '22222222-2222-2222-2222-222222222222';
@@ -107,7 +112,9 @@ export function ParentComplaintPage() {
 
             {mutation.isError && (
               <div role="alert" className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-                접수하지 못했습니다. 잠시 후 다시 시도해 주세요.
+                {isRateLimited(mutation.error)
+                  ? '짧은 시간에 여러 건이 접수되어 잠시 제한되었습니다. 1~2분 뒤에 다시 시도해 주세요. 작성하신 내용은 그대로 남아 있습니다.'
+                  : '접수하지 못했습니다. 잠시 후 다시 시도해 주세요.'}
               </div>
             )}
           </div>
