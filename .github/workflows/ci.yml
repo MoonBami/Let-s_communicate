@@ -18,6 +18,25 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
+    # 라우트 테스트는 실제 PostgreSQL 을 쓴다. 스키마가 네이티브 ENUM·JSONB·
+    # pgvector 에 의존해서 SQLite 로 대체하면 프로덕션과 다른 것을 검증하게 된다.
+    # DB 가 없으면 해당 테스트는 skip 되므로(conftest.py) 이 서비스가 빠지면
+    # 권한·귀속 검증이 조용히 사라진다 — 아래 'DB 연결 확인' 스텝이 그것을 막는다.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sotonghaeyo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -41,17 +60,30 @@ jobs:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/sotonghaeyo
           REDIS_URL: redis://localhost:6379/0
 
+      - name: DB 연결 확인 (라우트 테스트가 조용히 skip 되지 않도록)
+        # conftest.py 는 DB 에 붙지 못하면 api 마크를 skip 한다. 로컬 편의를 위한
+        # 동작이지만 CI 에서는 그게 곧 '권한·귀속 검증이 사라진 채 초록불'이 된다.
+        # 서비스가 뜨지 않았다면 여기서 먼저 실패시킨다.
+        run: |
+          python -c "
+          import psycopg
+          psycopg.connect('host=localhost port=5432 user=postgres password=postgres dbname=sotonghaeyo_test').close()
+          print('테스트 DB 연결 OK')
+          "
+
       - name: Run tests
-        # 안전 판정 경로(F3 욕설·위협 필터, 자동 응대 게이트, 접수자 귀속)의
-        # 회귀를 막는 스위트. DB·Redis·네트워크 없이 도는 순수 함수 테스트라
-        # 서비스 컨테이너가 필요 없다(1초 이내).
+        # 두 층을 함께 돌린다.
+        #  - 단위: F3 욕설·위협 필터, 자동 응대 게이트, 접수자 귀속 정책 (DB 불필요)
+        #  - 라우트(api 마크): 실제 요청으로 권한·귀속·파이프라인 결과 검증
         #
         # 이 스텝이 빠지면 필터 패턴을 넓히다 정당한 민원을 오차단하거나,
-        # 게이트가 뚫려 학교폭력 민원이 자동 응대되는 회귀를 아무도 못 잡는다.
-        # 실제로 두 사고 모두 이 테스트를 작성하는 과정에서 발견됐다.
+        # 게이트가 뚫려 학교폭력 민원이 자동 응대되거나, 남의 명의로 민원이
+        # 들어가는 회귀를 아무도 못 잡는다. 실제로 세 사고 모두 해당 테스트를
+        # 작성하는 과정에서 발견됐다.
         run: pytest
         env:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/sotonghaeyo
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/sotonghaeyo_test
           REDIS_URL: redis://localhost:6379/0
 
   frontend:
