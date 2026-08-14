@@ -30,7 +30,11 @@ export function ParentComplaintPage() {
       });
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (complaint) => {
+      // 차단된 민원은 폼을 비우지 않는다. 작성한 내용을 지워버리면 학부모가
+      // 처음부터 다시 써야 하고, 그럴 바엔 포기하거나 더 격앙된 채로 다시
+      // 제출하게 된다. 표현만 고쳐 다시 낼 수 있게 남겨둔다.
+      if (complaint.status === 'filtered_blocked') return;
       reset();
       queryClient.invalidateQueries({ queryKey: ['parent-complaints'] });
     },
@@ -57,7 +61,13 @@ export function ParentComplaintPage() {
       </header>
 
       {mutation.isSuccess && mutation.data ? (
-        <SuccessReceipt complaint={mutation.data} isParentWorkspace={isParentWorkspace} onWriteAnother={() => mutation.reset()} />
+        // 접수 결과를 상태별로 다르게 알린다. 차단된 민원까지 "접수되었습니다"로
+        // 보여주면 학부모는 전달된 줄 알고 답을 기다리다 같은 민원을 또 넣는다.
+        mutation.data.status === 'filtered_blocked' ? (
+          <BlockedNotice onRevise={() => mutation.reset()} />
+        ) : (
+          <SuccessReceipt complaint={mutation.data} isParentWorkspace={isParentWorkspace} onWriteAnother={() => mutation.reset()} />
+        )
       ) : (
         <form
           onSubmit={handleSubmit((values) => mutation.mutate(values))}
@@ -135,6 +145,58 @@ export function ParentComplaintPage() {
   );
 }
 
+/** 욕설·위협 필터(F3)에 걸려 전달되지 않은 경우.
+ *
+ * 어떤 표현이 걸렸는지는 알려주지 않는다 — 구체적으로 알려주면 필터를 우회하는
+ * 방법을 가르쳐주는 셈이 된다. 대신 무엇을 해야 하는지는 분명히 안내한다.
+ * 작성한 내용은 폼에 그대로 남아 있으므로 표현만 고쳐 다시 낼 수 있다.
+ */
+function BlockedNotice({ onRevise }: { onRevise: () => void }) {
+  return (
+    <section
+      role="alert"
+      className="mt-7 rounded-2xl border border-amber-200 bg-white p-6 shadow-lg shadow-amber-100/50 sm:p-9"
+    >
+      <span className="flex size-14 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+        <svg viewBox="0 0 24 24" fill="none" className="size-7" aria-hidden="true">
+          <path d="M12 9v4m0 3.5v.5M10.3 4.3 2.8 17.5A1.5 1.5 0 0 0 4.1 20h15.8a1.5 1.5 0 0 0 1.3-2.5L13.7 4.3a2 2 0 0 0-3.4 0Z"
+            stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+
+      <h2 className="mt-4 text-xl font-bold text-slate-950">담당자에게 전달되지 않았습니다</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        작성하신 내용에 <strong className="font-bold">담당자에게 전달할 수 없는 표현</strong>이 포함되어 있어
+        접수가 보류되었습니다. 표현을 다듬어 다시 제출해 주세요.
+      </p>
+
+      <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <p className="text-sm font-semibold text-slate-700">이렇게 바꿔 보세요</p>
+        <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600">
+          <li>· 감정을 표현하는 말보다 <strong>언제·어디서·무슨 일이 있었는지</strong> 사실을 적어 주세요.</li>
+          <li>· 상대를 향한 비난이나 위협하는 표현은 빼 주세요. 그래도 문제는 그대로 전달됩니다.</li>
+          <li>· 원하는 조치가 무엇인지 구체적으로 적으면 처리가 빨라집니다.</li>
+        </ul>
+      </div>
+
+      <p className="mt-4 text-xs leading-5 text-slate-500">
+        작성하신 내용은 학교 관리자가 확인할 수 있도록 보관됩니다. 학생의 안전과 관련된 긴급한 상황이라면
+        이 창구의 답변을 기다리지 말고 학교나 관계 기관에 바로 연락해 주세요.
+      </p>
+
+      <div className="mt-6">
+        <button
+          type="button"
+          onClick={onRevise}
+          className="w-full rounded-xl bg-amber-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-amber-700 sm:w-auto"
+        >
+          내용 수정하기
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function SuccessReceipt({
   complaint,
   isParentWorkspace,
@@ -152,7 +214,11 @@ function SuccessReceipt({
         </svg>
       </span>
       <h2 className="mt-4 text-xl font-bold text-slate-950">민원이 접수되었습니다</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-500">담당자가 내용을 확인한 뒤 처리 단계가 업데이트됩니다.</p>
+      <p className="mt-2 text-sm leading-6 text-slate-500">
+        {complaint.status === 'pending_teacher'
+          ? '담당 선생님께 전달되었습니다. 확인 후 처리 단계가 업데이트됩니다.'
+          : '접수 내용을 분류했습니다. 처리 단계는 접수번호로 확인할 수 있습니다.'}
+      </p>
 
       <div className="mx-auto mt-5 max-w-sm rounded-xl bg-slate-50 px-4 py-3 text-left">
         <p className="text-xs font-medium text-slate-400">접수번호</p>
