@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import can_view_filtered, load_visible_complaint, require_roles
+from app.api.deps import can_view_filtered, get_current_user, load_visible_complaint, require_roles
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
 from app.models.complaint import AnswerDraft, Complaint
@@ -131,6 +131,27 @@ def create_complaint(payload: ComplaintCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(complaint)
     return complaint
+
+
+@router.get("/mine", response_model=Paginated)
+def list_my_complaints(
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """학부모 본인 민원함 - parent_id가 본인인 민원만. 차단 민원은 제외."""
+    stmt = select(Complaint).where(
+        Complaint.parent_id == current.id,
+        Complaint.filtered.is_(False),
+    )
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    items = db.execute(
+        stmt.order_by(Complaint.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).scalars().all()
+    return Paginated(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("", response_model=Paginated)
