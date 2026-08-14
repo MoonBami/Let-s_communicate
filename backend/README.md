@@ -190,9 +190,16 @@ INFO app.api.routes.complaints | 자동 응대 보류 → 교사 배정: 자동 
 
 ## 테스트
 
+두 층으로 나뉜다.
+
 ```bash
-cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 함수 테스트
+cd backend
+pytest                 # 전부 (DB 없으면 라우트 테스트는 이유를 밝히고 skip)
+pytest -m "not api"    # 단위만 — DB·네트워크 불필요, 1초 미만
+pytest -m api          # 라우트만 — 실제 PostgreSQL 필요
 ```
+
+**단위 175건** — 정책·규칙을 순수 함수로 검증. DB 없이 돈다.
 
 | 파일 | 건수 | 대상 |
 |------|------|------|
@@ -200,11 +207,32 @@ cd backend && pytest        # tests/ — DB·네트워크 없이 도는 순수 �
 | `tests/test_synthetic_gen.py` | 32 | 합성 데이터 생성기 |
 | `tests/test_gate.py` | 30 | 자동 응대 게이트 |
 | `tests/test_eval_classifier.py` | 15 | 평가 하네스 지표 계산 |
+| `tests/test_parent_mine.py` | 10 | `/mine` 라우트 등록·순서·역할 배선 |
 | `tests/test_parent_flow.py` | 9 | 민원 접수자 귀속 정책 |
 | `tests/test_visibility.py` | 7 | 차단 민원(증거) 열람 권한 |
-| `tests/test_parent_mine.py` | 10 | `/mine` 라우트 등록·순서·역할 배선 |
 
-CI(`.github/workflows/ci.yml`)가 PR·push 마다 실행한다.
+**라우트 46건** (`tests/test_api_routes.py`) — TestClient 로 실제 요청을 보내
+권한·귀속·파이프라인 결과를 검증한다. 정책 함수와 라우트 배선만 봐서는
+"요청을 보냈을 때 실제로 403 이 나는가", "DB 에 무엇이 저장되는가"를 알 수 없다.
+**접수자 귀속 사칭 버그가 정확히 그 틈으로 새어나갔다** — 정책은 있었지만
+라우트에 연결되지 않은 상태였다.
+
+SQLite 를 쓰지 않는 이유: 스키마가 네이티브 ENUM·`JSONB`·pgvector `VECTOR(1536)`
+에 의존해서, 대체하면 프로덕션과 다른 것을 검증하게 된다.
+
+```bash
+docker run -d --name sotong-test-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=sotonghaeyo_test -p 5433:5432 pgvector/pgvector:pg16
+
+TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/sotonghaeyo_test pytest
+```
+
+`TEST_DATABASE_URL` 이 없으면 `DATABASE_URL` 의 DB 이름 뒤에 `_test` 를 붙여 쓴다.
+매 테스트마다 테이블을 비우므로 **DB 이름이 `_test` 로 끝나지 않으면 실행을 거부**한다.
+
+CI(`.github/workflows/ci.yml`)가 PR·push 마다 둘 다 실행한다. pgvector 서비스
+컨테이너를 붙였고, 연결이 안 되면 **라우트 테스트가 조용히 skip 되지 않도록**
+별도 스텝에서 먼저 실패시킨다.
 
 **F3 패턴을 넓히기 전에 `tests/test_content_filter.py` 를 먼저 읽을 것.**
 폭력을 *신고하는* 민원은 가해 표현과 어휘가 겹쳐서("친구가 아이를 때려서 다쳤습니다"),
@@ -328,7 +356,7 @@ python scripts/eval_classifier.py --data ... --max-unsafe 0
 - [x] ~~역할별 권한 세분화 (라우트 가드)~~
 - [x] ~~F8 이관(escalations): 교사 → MDT/관리자 이관 엔드포인트~~
 - [x] ~~Celery + Redis 워커 (STT 변환·배치 분석)~~
-- [x] ~~AI 서비스 단위 테스트 (필터 오차단 회귀 방지)~~ — 175건, `pytest` (CI 에서 자동 실행)
+- [x] ~~AI 서비스 단위 테스트 (필터 오차단 회귀 방지)~~ — 단위 175 + 라우트 46 = 221건, `pytest` (CI 에서 자동 실행)
 - [x] ~~자동 응대 게이트: 신뢰도·위험도·안전 키워드 교차 검증~~
 - [x] ~~F1 학습·평가 기반: 합성 데이터 생성기 + 평가 하네스 + 기준선~~
 - [ ] **API 라우트·워커 테스트** (`TestClient` + 테스트 DB) — 안전 판정 경로는
