@@ -1,0 +1,124 @@
+# 로컬 개발용 통합 스택.
+#
+#   docker compose up -d db redis        # DB·Redis만 (기존 방식 그대로 쓰고 싶으면)
+#   docker compose up --build             # 전체(백엔드·워커·프론트까지)
+#
+# 최초 실행 시 db/schema.sql이 자동으로 적용됩니다(Postgres init script).
+# backend/.env 가 없으면 backend는 실행되지 않으니 먼저
+#   cp backend/.env.example backend/.env
+# 를 해두세요. 기본값 그대로면 아래 db/redis 서비스에 바로 연결됩니다.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sotong-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sotonghaeyo
+    ports:
+      - "5432:5432"
+    volumes:
+      - sotong-db-data:/var/lib/postgresql/data
+      # 컨테이너 최초 생성 시 1회만 실행됨(볼륨이 비어있을 때).
+      # 스키마를 바꿨는데 반영이 안 되면 `docker compose down -v`로
+      # 볼륨을 지우고 다시 올려야 함.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sotonghaeyo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: sotong-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: sotong-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # 컨테이너 네트워크 안에서는 localhost가 아니라 서비스명으로 접속.
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/sotonghaeyo
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    container_name: sotong-worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/sotonghaeyo
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: ./backend
+    container_name: sotong-beat
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/sotonghaeyo
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat", "--loglevel=info"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: node:20-slim
+    container_name: sotong-web
+    working_dir: /workspace
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/workspace
+      # node_modules는 호스트와 분리된 익명 볼륨으로 — OS별 네이티브 모듈
+      # 충돌(호스트가 Windows/Mac인데 컨테이너는 Linux인 경우) 방지.
+      - web-node-modules:/workspace/node_modules
+      - web-app-node-modules:/workspace/apps/web/node_modules
+    command: ["sh", "-c", "npm ci && npm run dev -w @sotong/web -- --host 0.0.0.0"]
+
+volumes:
+  sotong-db-data:
+  web-node-modules:
+  web-app-node-modules:
