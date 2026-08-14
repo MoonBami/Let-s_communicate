@@ -12,6 +12,7 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.complaint import Complaint
 from app.models.user import User
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
@@ -153,11 +154,20 @@ def can_view_filtered(role: str) -> bool:
     return role in EVIDENCE_ROLES
 
 
-def load_visible_complaint(db: Session, complaint_id: str, current: User) -> Complaint:
+def load_visible_complaint(
+    db: Session,
+    complaint_id: str,
+    current: User,
+    request: Request | None = None,
+) -> Complaint:
     """열람 권한을 확인하고 민원을 반환.
 
     - 차단된 민원(증거)은 admin·mdt 만 열람 가능 — 교사에겐 애초에 노출하지 않는다.
     - 교사는 본인에게 배정된 민원만 열람 가능.
+
+    **차단된 민원을 실제로 열람한 경우 감사 로그를 남긴다.** 이 함수가 상세·유사사례·
+    초안 경로의 공통 관문이므로, 여기 한 곳에 걸면 증거를 읽는 모든 경로가 덮인다.
+    `request` 를 주면 접근 IP 까지 기록한다(감사 목적상 있으면 좋다).
     """
     complaint = db.get(Complaint, complaint_id)
     if complaint is None:
@@ -167,5 +177,16 @@ def load_visible_complaint(db: Session, complaint_id: str, current: User) -> Com
         raise HTTPException(status.HTTP_403_FORBIDDEN, "열람 권한이 없습니다.")
     if current.role == "teacher" and complaint.assigned_teacher_id != current.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "본인에게 배정된 민원만 열람할 수 있습니다.")
+
+    if complaint.filtered:
+        audit.record(
+            db,
+            user_id=current.id,
+            action=audit.VIEW_BLOCKED_COMPLAINT,
+            entity_type="complaint",
+            entity_id=complaint.id,
+            ip_address=client_ip(request) if request is not None else None,
+            detail={"role": current.role, "status": complaint.status},
+        )
 
     return complaint

@@ -1,11 +1,12 @@
 ﻿import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
     can_view_filtered,
+    client_ip,
     enforce_intake_rate_limit,
     get_current_user_optional,
     load_visible_complaint,
@@ -26,6 +27,7 @@ from app.schemas.complaint import (
     Paginated,
     RiskOut,
 )
+from app.services import audit
 from app.services.ai import (
     analyze_risk,
     classify,
@@ -186,6 +188,7 @@ def list_my_complaints(
 
 @router.get("", response_model=Paginated)
 def list_complaints(
+    request: Request,
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
@@ -213,17 +216,31 @@ def list_complaints(
         .limit(page_size)
     ).scalars().all()
 
+    # 목록 미리보기에도 차단 민원의 원문이 실려 나가므로 증거 접근으로 기록한다.
+    # 건별로 남기면 목록 한 번에 로그가 여러 줄 쌓이므로 요청당 1줄 + 건수로 남긴다.
+    blocked_count = sum(1 for item in items if item.filtered)
+    if blocked_count:
+        audit.record(
+            db,
+            user_id=current.id,
+            action=audit.LIST_BLOCKED_COMPLAINTS,
+            entity_type="complaint",
+            ip_address=client_ip(request),
+            detail={"role": current.role, "blocked_count": blocked_count, "page": page},
+        )
+
     return Paginated(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/{complaint_id}", response_model=ComplaintDetail)
 def get_complaint(
     complaint_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current: User = Depends(staff_only),
 ):
     """민원 상세 — 최신 분류·위험 분석 포함."""
-    complaint = load_visible_complaint(db, complaint_id, current)
+    complaint = load_visible_complaint(db, complaint_id, current, request)
 
     latest_cls = db.execute(
         select(Classification)
@@ -249,12 +266,13 @@ def get_complaint(
 @router.get("/{complaint_id}/similar-cases", response_model=list[SimilarCaseOut])
 def similar_cases(
     complaint_id: str,
+    request: Request,
     limit: int = 3,
     db: Session = Depends(get_db),
     current: User = Depends(staff_only),
 ):
     """F5: 이 민원과 유사한 과거 사례·대응 방식."""
-    complaint = load_visible_complaint(db, complaint_id, current)
+    complaint = load_visible_complaint(db, complaint_id, current, request)
     found = search_similar_cases(db, complaint.body, limit=limit, category=complaint.category)
     return [SimilarCaseOut.model_validate(c) for c in found]
 
@@ -262,11 +280,12 @@ def similar_cases(
 @router.post("/{complaint_id}/draft", response_model=DraftOut)
 def create_draft(
     complaint_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current: User = Depends(staff_only),
 ):
     """F4: AI 답변 초안 생성 — F5로 찾은 유사 사례를 근거로 주입한다."""
-    complaint = load_visible_complaint(db, complaint_id, current)
+    complaint = load_visible_complaint(db, complaint_id, current, request)
 
     cases = search_similar_cases(db, complaint.body, category=complaint.category)
     body, model_name = draft_answer(
@@ -284,11 +303,12 @@ def create_draft(
 @router.get("/{complaint_id}/drafts", response_model=list[DraftOut])
 def list_drafts(
     complaint_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current: User = Depends(staff_only),
 ):
     """이 민원에 대해 생성된 답변 초안 이력."""
-    complaint = load_visible_complaint(db, complaint_id, current)
+    complaint = load_visible_complaint(db, complaint_id, current, request)
     drafts = db.execute(
         select(AnswerDraft)
         .where(AnswerDraft.complaint_id == complaint.id)
