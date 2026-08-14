@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     ai_classify_model: str = "claude-haiku-4-5-20251001"
     ai_draft_model: str = "claude-sonnet-5"
+    # AI 서빙 공통 레이어(services/ai/client.py) 타임아웃·재시도 설정.
+    # F1·F2는 사용자 응답 경로(민원 접수)에 있으므로 너무 길게 잡지 않는다 —
+    # 넘기면 예외 없이 fallback으로 떨어진다.
+    ai_timeout_seconds: float = 20.0
+    ai_max_retries: int = 2
 
     # 자동 응대 게이트 — 이 신뢰도 미만이면 챗봇에 맡기지 않고 교사에게 보낸다.
     # 오분류 비용이 비대칭이므로(§services/ai/gate.py) 기본값을 높게 잡는다.

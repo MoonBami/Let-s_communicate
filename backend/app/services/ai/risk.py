@@ -8,11 +8,10 @@
 않도록 파싱/네트워크 실패 시 항상 fallback으로 떨어진다.
 """
 
-import json
 from dataclasses import dataclass, field
 
 from app.core.config import settings
-from app.services.ai.client import get_anthropic
+from app.services.ai.client import call_claude_json
 
 RISK_LEVELS = ["low", "medium", "high", "critical"]
 
@@ -45,25 +44,23 @@ class RiskResult:
 
 
 def analyze_risk(text: str) -> RiskResult:
-    client = get_anthropic()
-    if client is None:
+    data = call_claude_json(
+        system=SYSTEM_PROMPT,
+        user_content=text,
+        model=settings.ai_classify_model,
+        max_tokens=400,
+        caller="F2.risk",
+    )
+    if data is None:
         return _fallback(text)
 
+    risk = data.get("risk", "low")
+    if risk not in RISK_LEVELS:
+        risk = "low"
+    reasons = data.get("reasons", [])
+    if not isinstance(reasons, list):
+        reasons = [str(reasons)]
     try:
-        msg = client.messages.create(
-            model=settings.ai_classify_model,
-            max_tokens=400,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
-        raw = msg.content[0].text  # type: ignore[attr-defined]
-        data = json.loads(raw)
-        risk = data.get("risk", "low")
-        if risk not in RISK_LEVELS:
-            risk = "low"
-        reasons = data.get("reasons", [])
-        if not isinstance(reasons, list):
-            reasons = [str(reasons)]
         return RiskResult(
             sentiment_score=_clamp(float(data.get("sentiment_score", 0.0)), -1.0, 1.0),
             aggression_score=_clamp(float(data.get("aggression_score", 0.0)), 0.0, 1.0),
@@ -71,7 +68,7 @@ def analyze_risk(text: str) -> RiskResult:
             model_name=settings.ai_classify_model,
             reasons=[str(r) for r in reasons][:8],
         )
-    except Exception:
+    except (TypeError, ValueError):
         return _fallback(text)
 
 
