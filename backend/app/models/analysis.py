@@ -1,14 +1,24 @@
 """AI 처리 결과 · 라우팅 관계 모델.
 
 db/schema.sql 의 classifications / risk_analyses / content_filter_logs /
-teacher_assignments 에 대응. 접수 파이프라인이 남기는 이력·증거를 담는다.
+teacher_assignments / audit_logs 에 대응. 접수 파이프라인이 남기는 이력·증거를 담는다.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -80,3 +90,25 @@ class TeacherAssignment(Base):
     )
     grade: Mapped[int | None] = mapped_column(SmallInteger)
     class_name: Mapped[str | None] = mapped_column(String(50))
+
+
+class AuditLog(Base):
+    """민감정보 접근 감사 로그 (schema.sql 의 audit_logs).
+
+    누가 언제 어떤 자원을 열람했는지 기록한다. 차단된 민원(F3 증거)의 원문에는
+    욕설·위협과 학생·학부모 민감정보가 담기므로 그 접근을 추적할 필요가 있다.
+    기록은 `services/audit.py` 를 통해 남긴다.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(50))
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    ip_address: Mapped[str | None] = mapped_column(INET)
+    detail: Mapped[dict | list | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

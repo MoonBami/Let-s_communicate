@@ -2,6 +2,7 @@
 from app.models.user import School, Student, User  # noqa: F401
 from app.models.complaint import AnswerDraft, Complaint  # noqa: F401
 from app.models.analysis import (  # noqa: F401
+    AuditLog,
     Classification,
     ContentFilterLog,
     RiskAnalysis,
