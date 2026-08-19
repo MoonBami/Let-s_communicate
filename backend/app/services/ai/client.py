@@ -107,9 +107,26 @@ def call_claude(
 
     latency_ms = int((time.monotonic() - started) * 1000)
     try:
-        text = msg.content[0].text  # type: ignore[attr-defined]
-    except (IndexError, AttributeError):
-        logger.error("ai_serving | %s: 응답 형식이 예상과 다름 → fallback", caller)
+        # content[0]이 항상 텍스트라고 가정하면 안 된다. 확장 추론(thinking)을
+        # 쓰는 모델은 thinking 블록을 먼저 반환하고 그 뒤에 text 블록이 오는
+        # 경우가 있다 — 이 경우 content[0].text는 존재는 하지만 None이라,
+        # 예외 없이 조용히 통과해 DB의 NOT NULL 제약을 건드리는 원인이 됐다.
+        # (F1·F2가 쓰는 모델은 우연히 첫 블록이 항상 텍스트라 이 문제가
+        # 드러나지 않았고, F4가 쓰는 모델에서만 실제로 재현됐다.)
+        text_blocks = [
+            block.text for block in msg.content
+            if getattr(block, "type", None) == "text"
+        ]
+        text = "".join(text_blocks)
+    except AttributeError:
+        text_blocks = None
+        text = ""
+
+    if not text:
+        logger.error(
+            "ai_serving | %s: 응답에서 텍스트 블록을 찾지 못함 (block_types=%s) → fallback",
+            caller, [getattr(b, "type", "?") for b in msg.content],
+        )
         return None
 
     logger.info("ai_serving | %s: model=%s latency_ms=%d", caller, model, latency_ms)
