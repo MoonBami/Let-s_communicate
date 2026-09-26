@@ -106,14 +106,41 @@ def call_claude(
         return None
 
     latency_ms = int((time.monotonic() - started) * 1000)
-    try:
-        text = msg.content[0].text  # type: ignore[attr-defined]
-    except (IndexError, AttributeError):
-        logger.error("ai_serving | %s: 응답 형식이 예상과 다름 → fallback", caller)
+    text = _first_text(msg)
+    if not text:
+        logger.error(
+            "ai_serving | %s: 응답에 텍스트 블록이 없다 → fallback (blocks=%s)",
+            caller, [getattr(b, "type", "?") for b in getattr(msg, "content", [])],
+        )
         return None
 
     logger.info("ai_serving | %s: model=%s latency_ms=%d", caller, model, latency_ms)
     return ClaudeCallResult(text=text, model=model, latency_ms=latency_ms)
+
+
+def _first_text(msg) -> str | None:
+    """응답에서 **첫 번째 text 블록**의 내용을 꺼낸다.
+
+    `content[0]` 을 그대로 집으면 안 된다. 모델에 따라 첫 블록이 텍스트가 아니다 —
+    Claude Sonnet 5 는 thinking 이 기본으로 켜져 있어 응답이 이렇게 온다.
+
+        [0] type='thinking'  text=None
+        [1] type='text'      text='실제 답변'
+
+    그래서 F4 초안이 None 으로 저장되다 `answer_drafts.draft_body` 의 NOT NULL 에
+    걸려 500 이 났다. 반면 Haiku 4.5 는 thinking 이 기본으로 꺼져 있어 첫 블록이
+    곧 텍스트였고, 그래서 **F1·F2 는 멀쩡한데 F4 만 깨지는** 모양이 됐다.
+
+    빈 문자열도 실패로 본다 — 호출부는 '성공(내용 있음) / 실패(None)' 두 가지만
+    처리하면 되고, 빈 초안을 저장하는 것보다 정형 문구로 떨어지는 편이 낫다.
+    """
+    for block in getattr(msg, "content", None) or []:
+        if getattr(block, "type", None) != "text":
+            continue
+        text = getattr(block, "text", None)
+        if text:
+            return text
+    return None
 
 
 def call_claude_json(
