@@ -17,8 +17,11 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     anthropic_api_key: str | None = None
-    ai_classify_model: str = "claude-haiku-4-5-20251001"
-    ai_draft_model: str = "claude-sonnet-5"
+    # 모델 ID 에 날짜 접미사를 붙이지 않는다. "claude-haiku-4-5-20251001" 처럼 쓰면
+    # 404 가 나고, client.py 가 예외를 잡아 조용히 fallback 으로 떨어진다 —
+    # 키를 넣어도 AI 가 안 도는데 오류도 안 보이는 상태가 된다.
+    ai_classify_model: str = "claude-haiku-4-5"   # F1 분류·F2 위험 (빠르고 저렴)
+    ai_draft_model: str = "claude-sonnet-5"       # F4 답변 초안 (문장 품질 우선)
     # AI 서빙 공통 레이어(services/ai/client.py) 타임아웃·재시도 설정.
     # F1·F2는 사용자 응답 경로(민원 접수)에 있으므로 너무 길게 잡지 않는다 —
     # 넘기면 예외 없이 fallback으로 떨어진다.
