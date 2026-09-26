@@ -199,6 +199,51 @@ def test_없는_민원은_404(client, users, tokens):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("title", ["개새끼야", "너 죽여버릴거야", "씨발 가만 안 둬"])
+def test_제목에_쓴_욕설_위협도_차단된다(client, student, users, db, title):
+    """이슈 #18 회귀 — 본문만 검사하던 시절 교사 민원함에 그대로 떴다."""
+    r = client.post(
+        "/api/complaints",
+        json={"schoolId": SCHOOL, "studentId": STUDENT, "title": title,
+              "body": "우리 애 일로 확인 부탁드립니다."},
+    )
+    assert r.json()["status"] == "filtered_blocked", f"제목 '{title}' 가 통과했다"
+
+
+def test_제목의_욕설도_증거로_보관된다(client, student, users, db):
+    """차단은 됐는데 근거가 없으면 대응할 수 없다."""
+    client.post(
+        "/api/complaints",
+        json={"schoolId": SCHOOL, "studentId": STUDENT, "title": "개새끼야",
+              "body": "우리 애 일로 확인 부탁드립니다."},
+    )
+
+    from app.models.analysis import ContentFilterLog
+
+    log = db.query(ContentFilterLog).one()
+    assert "개새끼야" in log.raw_evidence
+
+
+def test_제목의_위협은_위험도에도_반영된다(client, student, users, db):
+    """F2 도 제목을 봐야 교사 화면의 우선순위 표시가 맞는다."""
+    r = client.post(
+        "/api/complaints",
+        json={"schoolId": SCHOOL, "studentId": STUDENT, "title": "너 죽여버릴거야",
+              "body": "우리 애 일로 확인 부탁드립니다."},
+    )
+    assert r.json()["risk"] in ("high", "critical")
+
+
+def test_제목이_신고여도_오차단되지_않는다(client, student, users, assigned_teacher):
+    """제목은 짧아 맥락이 없다 — 본문과 함께 봐야 신고가 살아남는다."""
+    r = client.post(
+        "/api/complaints",
+        json={"schoolId": SCHOOL, "studentId": STUDENT, "title": "때려서 다쳤습니다",
+              "body": "같은 반 친구가 아이를 때려서 팔에 멍이 들었습니다. 상담을 요청드립니다."},
+    )
+    assert r.json()["status"] == "pending_teacher"
+
+
 def test_욕설_위협은_차단되고_증거가_보관된다(client, student, users, db):
     r = submit(client, body=ABUSIVE)
     assert r.json()["status"] == "filtered_blocked"
@@ -207,7 +252,11 @@ def test_욕설_위협은_차단되고_증거가_보관된다(client, student, u
 
     log = db.query(ContentFilterLog).one()
     assert log.is_blocked
-    assert log.raw_evidence == ABUSIVE, "원문 그대로 보관되어야 증거로 쓸 수 있다"
+    # 증거는 제목+본문 전체다. 본문은 한 글자도 바뀌지 않은 채 들어 있어야 하고,
+    # 제목도 함께 남아야 한다(제목에 쓴 욕설이 기록에서 사라지지 않도록).
+    assert ABUSIVE in log.raw_evidence, "본문이 원문 그대로 보관되어야 증거로 쓸 수 있다"
+    assert log.raw_evidence.endswith(ABUSIVE), "본문이 변형·절단되면 안 된다"
+    assert "t" in log.raw_evidence, "제목도 증거에 포함되어야 한다"
     assert log.matched_terms
 
 
