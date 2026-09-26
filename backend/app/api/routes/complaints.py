@@ -57,6 +57,22 @@ def _max_risk(a: str, b: str) -> str:
     return a if _RISK_ORDER.get(a, 0) >= _RISK_ORDER.get(b, 0) else b
 
 
+def screening_text(title: str | None, body: str) -> str:
+    """AI 파이프라인(F3·F1·F2·게이트)이 검사할 텍스트.
+
+    **제목도 반드시 포함해야 한다.** 한때 본문만 검사해서, 제목에 욕설·위협을 쓰면
+    필터를 그대로 통과해 교사 민원함에 떴다. 교사가 목록에서 가장 먼저 읽는 자리가
+    무방비였고, 차단되지 않으니 증거(`content_filter_logs`)도 남지 않았다.
+
+    제목만 따로 검사하지 않고 **본문과 합쳐서 한 번에** 보는 이유는 맥락 때문이다.
+    제목은 짧아 맥락이 없다 — "때려서" 같은 신고 표현이 단독으로 들어오면 가해와
+    구분할 근거가 사라져 오차단이 늘어난다(F3 오차단 10종 수정 이력 참고).
+    합쳐서 보면 제목의 표현도 잡히면서 본문의 맥락이 유지된다.
+    """
+    title = (title or "").strip()
+    return f"{title}\n{body}" if title else body
+
+
 @router.post(
     "",
     response_model=ComplaintOut,
@@ -86,12 +102,13 @@ def create_complaint(
     분류·위험 결과는 이력 테이블에 함께 남긴다.
     """
     body = payload.body
+    screened = screening_text(payload.title, body)  # 제목까지 함께 검사한다
 
-    filter_result = filter_content(body)       # F3
-    classification = classify(body)            # F1
-    risk_result = analyze_risk(body)           # F2
+    filter_result = filter_content(screened)   # F3
+    classification = classify(screened)        # F1
+    risk_result = analyze_risk(screened)       # F2
     gate = evaluate_auto_answer(               # 자동 응대 안전장치
-        body, classification.category, classification.confidence, risk_result.risk
+        screened, classification.category, classification.confidence, risk_result.risk
     )
 
     complaint = Complaint(
@@ -151,7 +168,9 @@ def create_complaint(
                 is_blocked=True,
                 matched_terms=filter_result.matched_terms,
                 severity=filter_result.severity,
-                raw_evidence=body,  # 원문 증거 (접근 통제·암호화는 저장 계층 책임)
+                # 제목+본문 전체를 증거로 남긴다. 본문만 남기면 제목에 쓴 욕설이
+                # 기록에서 사라져, 차단은 됐는데 근거가 없는 상태가 된다.
+                raw_evidence=screened,  # (접근 통제·암호화는 저장 계층 책임)
             )
         )
 
