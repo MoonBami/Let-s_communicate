@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     rate_limit_intake_per_minute: int = 5
     rate_limit_intake_per_hour: int = 100
 
+    # 학교 코드 조회 유량 제한. 학교 정보는 공개라 막을 것은 '코드 전수 대입으로
+    # 이 서비스를 쓰는 학교 목록을 긁어가는 것' 정도다. 학부모는 코드를 한두 번
+    # 확인할 뿐이므로 분당 30회면 NAT 를 공유해도 넉넉하다.
+    rate_limit_school_lookup_per_minute: int = 30
+
     # 프록시(로드밸런서·리버스 프록시) 뒤에 있을 때만 켠다.
     # 켜면 X-Forwarded-For 를 클라이언트 IP 로 신뢰한다 — 프록시가 없는데 켜면
     # 공격자가 헤더를 위조해 한도를 무한히 우회할 수 있으므로 기본값은 꺼둔다.

@@ -12,6 +12,15 @@ export const API = {
     draft: (id: string) => `/api/complaints/${id}/draft`, // F4 생성
     drafts: (id: string) => `/api/complaints/${id}/drafts`, // F4 이력
     similarCases: (id: string) => `/api/complaints/${id}/similar-cases`, // F5
+    assignee: (id: string) => `/api/complaints/${id}/assignee`, // 담당 교사 지정 (admin)
+  },
+  schools: {
+    byCode: (code: string) => `/api/schools/by-code/${encodeURIComponent(code)}`, // 공개
+  },
+  admin: {
+    teachers: '/api/admin/teachers', // 교사 목록 + 담당 반 (admin)
+    assignments: '/api/admin/assignments', // 반 배정 (admin)
+    assignment: (id: string) => `/api/admin/assignments/${id}`, // 배정 해제 (admin)
   },
   escalations: {
     list: '/api/escalations', // F8 (admin·mdt)

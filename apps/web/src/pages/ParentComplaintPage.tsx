@@ -1,34 +1,60 @@
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { API, type CreateComplaintRequest, type Complaint } from '@sotong/shared';
+import { API, type CreateComplaintRequest, type Complaint, type SchoolPublic } from '@sotong/shared';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
 
-/** 유량 제한(429)에 걸린 요청인지. 일반 오류와 안내 문구를 달리하기 위해 구분한다. */
-function isRateLimited(error: unknown): boolean {
-  return (error as { response?: { status?: number } })?.response?.status === 429;
+function httpStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } })?.response?.status;
 }
 
-// 데모 시드(seed.py)와 맞춘 고정 UUID. 학교·학생 선택 API가 준비되면 제거한다.
-const DEMO_SCHOOL_ID = '11111111-1111-1111-1111-111111111111';
-const DEMO_STUDENT_ID = '22222222-2222-2222-2222-222222222222';
+/** 유량 제한(429)에 걸린 요청인지. 일반 오류와 안내 문구를 달리하기 위해 구분한다. */
+function isRateLimited(error: unknown): boolean {
+  return httpStatus(error) === 429;
+}
+
+interface ComplaintFormValues {
+  title?: string;
+  body: string;
+  studentName?: string;
+  studentGrade?: string;
+  studentClass?: string;
+}
 
 // 학부모 민원 접수 화면. 공개 접수와 로그인 학부모 작업공간에서 함께 사용한다.
+//
+// 학교는 학교 코드로 찾는다(공개 API). 학생은 검색 API 가 없다 — 미성년자 정보를
+// 아무나 조회하게 할 수 없어서, 이름·학년·반을 접수와 함께 보내면 서버가 학교 안에서
+// 조용히 찾아 담임에게 연결한다. 찾았는지 여부는 응답에도 드러나지 않는다.
 export function ParentComplaintPage() {
   const user = useAuthStore((state) => state.user);
   const isParentWorkspace = user?.role === 'parent';
   const queryClient = useQueryClient();
-  const { register, handleSubmit, reset, formState } = useForm<CreateComplaintRequest>();
+  const { register, handleSubmit, reset, formState } = useForm<ComplaintFormValues>();
+  const [school, setSchool] = useState<SchoolPublic | null>(null);
 
   const mutation = useMutation({
-    mutationFn: async (payload: CreateComplaintRequest) => {
-      const { data } = await api.post<Complaint>(API.complaints.create, {
-        ...payload,
-        schoolId: DEMO_SCHOOL_ID,
-        studentId: DEMO_STUDENT_ID,
-      });
+    mutationFn: async (values: ComplaintFormValues) => {
+      if (!school) throw new Error('school-required');
+      const payload: CreateComplaintRequest = {
+        schoolId: school.id,
+        title: values.title,
+        body: values.body,
+      };
+      const name = values.studentName?.trim();
+      const grade = Number(values.studentGrade);
+      const className = values.studentClass?.trim();
+      if (name && grade && className) {
+        payload.student = { name, grade, className };
+      }
+      const { data } = await api.post<Complaint>(API.complaints.create, payload);
       return data;
+    },
+    onError: (error) => {
+      // 확인한 학교가 그 사이 사라진 경우 — 코드부터 다시 확인하게 한다.
+      if (httpStatus(error) === 404) setSchool(null);
     },
     onSuccess: (complaint) => {
       // 차단된 민원은 폼을 비우지 않는다. 작성한 내용을 지워버리면 학부모가
@@ -81,6 +107,48 @@ export function ParentComplaintPage() {
               </p>
             </div>
 
+            <SchoolCodeStep school={school} onChange={setSchool} />
+
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-bold text-slate-700">학생 정보 (선택)</legend>
+              <p className="text-xs leading-5 text-slate-500">
+                입력하시면 담임 선생님께 바로 전달됩니다. 비워 두셔도 학교 담당자가 확인 후 전달합니다.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_7rem_7rem]">
+                <input
+                  {...register('studentName', { maxLength: 100 })}
+                  placeholder="학생 이름"
+                  autoComplete="off"
+                  className="h-12 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-50"
+                />
+                <input
+                  {...register('studentGrade', {
+                    validate: (v, all) =>
+                      !all.studentName?.trim() || (Number(v) >= 1 && Number(v) <= 12) || '학년을 입력해 주세요.',
+                  })}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={12}
+                  placeholder="학년"
+                  className="h-12 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-50"
+                />
+                <input
+                  {...register('studentClass', {
+                    maxLength: 50,
+                    validate: (v, all) => !all.studentName?.trim() || !!v?.trim() || '반을 입력해 주세요.',
+                  })}
+                  placeholder="반 (예: 2)"
+                  className="h-12 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-50"
+                />
+              </div>
+              {(formState.errors.studentGrade || formState.errors.studentClass) && (
+                <span className="text-xs font-medium text-red-600">
+                  학생 이름을 적으셨다면 학년과 반도 함께 입력해 주세요.
+                </span>
+              )}
+            </fieldset>
+
             <label className="block space-y-2">
               <span className="text-sm font-bold text-slate-700">제목</span>
               <input
@@ -124,7 +192,9 @@ export function ParentComplaintPage() {
               <div role="alert" className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {isRateLimited(mutation.error)
                   ? '짧은 시간에 여러 건이 접수되어 잠시 제한되었습니다. 1~2분 뒤에 다시 시도해 주세요. 작성하신 내용은 그대로 남아 있습니다.'
-                  : '접수하지 못했습니다. 잠시 후 다시 시도해 주세요.'}
+                  : httpStatus(mutation.error) === 404
+                    ? '학교를 찾을 수 없습니다. 학교 코드를 다시 확인해 주세요. 작성하신 내용은 그대로 남아 있습니다.'
+                    : '접수하지 못했습니다. 잠시 후 다시 시도해 주세요.'}
               </div>
             )}
           </div>
@@ -133,13 +203,101 @@ export function ParentComplaintPage() {
             <p className="text-xs text-slate-400">접수 후에는 처리 단계에 따라 담당자가 내용을 확인합니다.</p>
             <button
               type="submit"
-              disabled={mutation.isPending || formState.isSubmitting}
+              disabled={!school || mutation.isPending || formState.isSubmitting}
               className="inline-flex min-w-32 items-center justify-center rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {mutation.isPending ? '안전하게 접수 중...' : '민원 접수하기'}
             </button>
           </div>
         </form>
+      )}
+    </div>
+  );
+}
+
+/** 1단계: 학교 코드로 학교 확인. 확인된 학교 이름을 보여줘야 학부모가 잘못된
+ *  코드로 엉뚱한 학교에 민원을 넣는 일을 스스로 알아챈다. */
+function SchoolCodeStep({
+  school,
+  onChange,
+}: {
+  school: SchoolPublic | null;
+  onChange: (school: SchoolPublic | null) => void;
+}) {
+  const [code, setCode] = useState('');
+  const lookup = useMutation({
+    mutationFn: async (value: string) => {
+      const { data } = await api.get<SchoolPublic>(API.schools.byCode(value));
+      return data;
+    },
+    onSuccess: (data) => onChange(data),
+  });
+
+  if (school) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-white px-4 py-3">
+        <div>
+          <p className="text-xs font-medium text-slate-500">접수 학교</p>
+          <p className="text-sm font-bold text-slate-900">
+            {school.name}
+            {school.eduOffice && <span className="ml-2 font-normal text-slate-500">{school.eduOffice}</span>}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onChange(null);
+            lookup.reset();
+          }}
+          className="shrink-0 text-xs font-semibold text-slate-500 transition hover:text-emerald-700"
+        >
+          학교 변경
+        </button>
+      </div>
+    );
+  }
+
+  const status = httpStatus(lookup.error);
+  return (
+    <div className="space-y-2">
+      <label htmlFor="school-code" className="text-sm font-bold text-slate-700">
+        학교 코드 <span className="text-emerald-600">*</span>
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="school-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => {
+            // 이 입력칸의 Enter 가 민원 폼 제출로 이어지지 않게 한다.
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (code.trim()) lookup.mutate(code.trim());
+            }
+          }}
+          placeholder="가정통신문에 안내된 학교 코드"
+          autoComplete="off"
+          className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm uppercase outline-none transition placeholder:normal-case placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-50"
+        />
+        <button
+          type="button"
+          onClick={() => code.trim() && lookup.mutate(code.trim())}
+          disabled={!code.trim() || lookup.isPending}
+          className="h-12 shrink-0 rounded-xl border border-emerald-200 bg-white px-4 text-sm font-bold text-emerald-700 transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {lookup.isPending ? '확인 중...' : '학교 확인'}
+        </button>
+      </div>
+      {lookup.isError ? (
+        <span role="alert" className="text-xs font-medium text-red-600">
+          {status === 404
+            ? '해당 코드의 학교를 찾을 수 없습니다. 코드를 다시 확인해 주세요.'
+            : status === 429
+              ? '조회가 너무 잦습니다. 잠시 후 다시 시도해 주세요.'
+              : '학교를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'}
+        </span>
+      ) : (
+        <span className="text-xs text-slate-400">학교 코드를 모르시면 학교 행정실에 문의해 주세요.</span>
       )}
     </div>
   );

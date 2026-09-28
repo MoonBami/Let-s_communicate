@@ -2,7 +2,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.base import CamelModel
 
@@ -15,6 +15,18 @@ class ChannelEnum(str, Enum):
     call = "call"
 
 
+class StudentLookup(CamelModel):
+    """학부모가 입력한 학생 정보 — 서버가 학교 안에서 학생을 찾는 데 쓴다.
+
+    학부모는 학생 UUID 를 알 수 없으므로 이름·학년·반으로 받는다. 셋 다 필수다 —
+    이름만으로 찾으면 동명이인에게 연결될 위험이 커진다(services/directory.py).
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    grade: int = Field(ge=1, le=12)
+    class_name: str = Field(min_length=1, max_length=50)
+
+
 class ComplaintCreate(CamelModel):
     """민원 접수 입력.
 
@@ -25,9 +37,24 @@ class ComplaintCreate(CamelModel):
 
     school_id: uuid.UUID
     student_id: uuid.UUID | None = None
+    student: StudentLookup | None = None
     channel: ChannelEnum = ChannelEnum.web_form
     title: str | None = None
     body: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _one_way_to_name_student(self) -> "ComplaintCreate":
+        # 둘 다 오면 어느 쪽을 믿을지가 모호하다. 조용히 한쪽을 고르면
+        # 학부모가 입력한 학생과 다른 학생에게 연결될 수 있으므로 거부한다.
+        if self.student_id is not None and self.student is not None:
+            raise ValueError("studentId 와 student 중 하나만 보낼 수 있습니다.")
+        return self
+
+
+class ComplaintAssign(CamelModel):
+    """관리자가 민원의 담당 교사를 지정·변경한다."""
+
+    teacher_id: uuid.UUID
 
 
 class ComplaintOut(CamelModel):

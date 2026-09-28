@@ -64,6 +64,7 @@ $$ LANGUAGE plpgsql;
 -- 학교
 CREATE TABLE schools (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code         VARCHAR(20) UNIQUE,           -- 학교 코드(학부모가 입력해 학교를 찾는 공개 식별자)
     name         VARCHAR(150) NOT NULL,
     edu_office   VARCHAR(100),                 -- 관할 교육청
     address      VARCHAR(255),
@@ -112,6 +113,8 @@ CREATE TABLE students (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_students_school ON students(school_id);
+-- 민원 접수 시 학교 안에서 이름·학년·반으로 학생을 찾는다(services/directory.py).
+CREATE INDEX idx_students_lookup ON students(school_id, grade, class_name, name);
 
 -- 보호자(학부모) - 학생 관계
 CREATE TABLE guardianships (

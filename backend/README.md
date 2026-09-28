@@ -63,10 +63,27 @@ celery -A app.worker.celery_app:celery_app beat   --loglevel=info   # 주기 작
 |--------|------|
 | `admin@demo.sotong` | 관리자 |
 | `mdt@demo.sotong` | 민원대응팀(MDT) |
-| `teacher@demo.sotong` | 교사 (시드 학생 배정 있음 → 민원함에 라우팅 건 표시) |
+| `teacher@demo.sotong` | 교사 (3학년 2반 김학생 담당 → 민원함에 라우팅 건 표시) |
 | `parent@demo.sotong` | 학부모 |
 
-회원가입(`POST /api/auth/signup`)으로 교사·관리자 계정을 새로 만들 수도 있다.
+회원가입(`POST /api/auth/signup`)으로 **교사** 계정을 새로 만들 수 있다. 가입만으로는
+민원이 보이지 않는다 — 관리자가 **교사 배정** 화면(`/teachers`)에서 담당 학년·반을 맡겨야
+그 반 민원이 라우팅된다. 가입 시 본인이 담당 반을 고르게 하지 않는 이유는, 공개 경로라
+아무나 "3학년 2반 담임"을 주장해 그 반 민원을 읽을 수 있기 때문이다. 관리자 계정은
+가입으로 만들 수 없다(차단 민원 증거까지 열람하는 역할이라서). 시드나 DB 에서 직접 만든다.
+
+학부모 접수 화면은 학교 코드로 학교를 찾는다. 데모 학교 코드는 `DEMO001`,
+데모 학생은 `김학생 3학년 2반`이다.
+
+### 기존 DB 업데이트 (로컬 볼륨·Neon)
+
+학교 코드 컬럼이 추가됐다. 이미 만들어진 DB 에는 마이그레이션을 한 번 적용하고
+시드를 다시 돌린다(둘 다 여러 번 실행해도 안전).
+
+```bash
+psql "<postgres://... 연결 문자열>" -f ../db/migrations/20260929_school_code.sql   # Neon 은 SQL Editor 에 붙여 넣어도 된다
+DATABASE_URL="<연결 문자열>" python seed.py                          # 데모 학교에 코드 DEMO001 부여
+```
 
 ## 구조
 
@@ -106,10 +123,15 @@ app/
 
 | 메서드·경로 | 설명 | 권한 |
 |-------------|------|------|
-| `POST /api/auth/signup` | 교사·관리자 회원가입 → 토큰 발급 | 공개 |
+| `POST /api/auth/signup` | **교사** 회원가입 → 토큰 발급 (관리자는 가입 불가) | 공개 |
 | `POST /api/auth/login` | 로그인 → 토큰 발급 | 공개 |
 | `GET /api/auth/me` | 내 정보 | 로그인 |
-| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→게이트→라우팅) | 공개 (로그인 시 본인 귀속) |
+| `GET /api/schools/by-code/{code}` | 학교 코드로 학교 찾기 (공개 정보만, 분당 30회) | 공개 |
+| `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→게이트→라우팅). 없는 학교·학생은 404 | 공개 (로그인 시 본인 귀속) |
+| `PATCH /api/complaints/{id}/assignee` | 민원 담당 교사 지정·변경 | admin |
+| `GET /api/admin/teachers` | 이 학교 교사 + 미소속(갓 가입) 교사와 담당 반 | admin |
+| `POST /api/admin/assignments` | 교사에게 학년·반 배정 (기존 담당 해제, 진행 중 민원 이동 선택) | admin |
+| `DELETE /api/admin/assignments/{id}` | 배정 해제 | admin |
 | `GET /api/complaints/mine` | 학부모 본인 민원함 | parent |
 | `GET /api/complaints` | 민원 목록 (교사=본인 배정·필터 통과분 / admin·mdt=차단 건 포함 전체) | teacher·admin·mdt |
 | `GET /api/complaints/{id}` | 민원 상세 | teacher(본인 배정)·admin·mdt |

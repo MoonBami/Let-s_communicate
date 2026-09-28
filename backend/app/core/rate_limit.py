@@ -183,6 +183,11 @@ def intake_rules() -> tuple[RateRule, ...]:
     )
 
 
+def school_lookup_rules() -> tuple[RateRule, ...]:
+    """학교 코드 조회 한도(`GET /api/schools/by-code/{code}`)."""
+    return (RateRule(settings.rate_limit_school_lookup_per_minute, 60),)
+
+
 def reset_for_tests() -> None:
     """테스트 격리용 — 프로세스 내 카운터를 비운다."""
     _memory.reset()
