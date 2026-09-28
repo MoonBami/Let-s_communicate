@@ -32,6 +32,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from app.core.config import settings
 
@@ -110,6 +111,21 @@ class _RedisCounter:
         return int(count), max(1, remaining)
 
 
+def _redact(url: str) -> str:
+    """로그용 Redis 주소 — 비밀번호를 뺀 `scheme://host:port` 만 남긴다.
+
+    Upstash 같은 관리형 Redis 는 주소에 비밀번호가 들어 있어서, 통째로 찍으면
+    배포 로그(Vercel 등)에 자격 증명이 그대로 남는다.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or "?"
+        port = f":{parts.port}" if parts.port else ""
+        return f"{parts.scheme}://{host}{port}"
+    except ValueError:
+        return "<redis_url 파싱 실패>"
+
+
 _memory = _MemoryCounter()
 _redis_counter: _RedisCounter | None = None
 _redis_checked = False
@@ -127,7 +143,7 @@ def _counter():
             client = redis.Redis.from_url(settings.redis_url, socket_timeout=0.3)
             client.ping()
             _redis_counter = _RedisCounter(client)
-            logger.info("rate_limit | Redis 카운터 사용: %s", settings.redis_url)
+            logger.info("rate_limit | Redis 카운터 사용: %s", _redact(settings.redis_url))
         except Exception as exc:
             logger.warning(
                 "rate_limit | Redis 에 붙지 못해 프로세스 내 카운터로 동작한다 "

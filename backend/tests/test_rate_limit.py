@@ -134,3 +134,20 @@ def test_기본_한도가_사람의_사용을_막지_않는_수준():
     # 시간당 한도는 같은 NAT 뒤 여러 학부모를 고려해 넉넉해야 한다.
     assert 3 <= minute.limit <= 10
     assert hour.limit >= 50, "학교에서 사건이 터지면 여러 학부모가 동시에 접수한다"
+
+
+# ── 로그에 자격 증명을 남기지 않는다 ───────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("rediss://default:s3cret@apn1-x.upstash.io:6379", "rediss://apn1-x.upstash.io:6379"),
+        ("redis://localhost:6379/0", "redis://localhost:6379"),
+        ("redis://:s3cret@localhost", "redis://localhost"),
+    ],
+)
+def test_Redis_주소_로그에서_비밀번호를_뺀다(url, expected):
+    redacted = rate_limit._redact(url)
+    assert redacted == expected
+    assert "s3cret" not in redacted
