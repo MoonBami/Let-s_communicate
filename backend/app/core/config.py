@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,6 +56,21 @@ class Settings(BaseSettings):
     # F7 STT — CLOVA Speech Long Sentence. 미설정이면 변환 태스크가 실패한다.
     clova_stt_url: str | None = None
     clova_stt_secret: str | None = None
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, v: str) -> str:
+        """드라이버를 psycopg(v3)로 고정한다.
+
+        Vercel–Neon 연동은 `DATABASE_URL` 을 `postgres://`·`postgresql://` 로 주입하고,
+        연동이 다시 동기화되면 손으로 고친 값을 덮어쓴다. 그대로 두면 SQLAlchemy 가
+        설치되지 않은 psycopg2 를 찾거나(`postgresql://`) 방언을 못 찾아(`postgres://`)
+        **앱 import 단계에서 죽는다** — /health 까지 전부 500 이 된다.
+        """
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
 
     @property
     def cors_origin_list(self) -> list[str]:
