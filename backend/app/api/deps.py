@@ -111,6 +111,42 @@ def enforce_intake_rate_limit(
     )
 
 
+def enforce_school_lookup_rate_limit(
+    request: Request,
+    current: User | None = Depends(get_current_user_optional),
+) -> None:
+    """학교 코드 조회 유량 제한. 접수 카운터와 섞이지 않도록 키를 분리한다 —
+    코드를 몇 번 확인했다고 정작 민원 접수가 막히면 안 된다."""
+    key = f"school-lookup:{rate_limit_key(request, current)}"
+    verdict = rate_limit.check(key, rate_limit.school_lookup_rules())
+    if verdict.allowed:
+        return
+
+    logger.warning(
+        "rate_limit | 학교 조회 거부 key=%s rule=%s retry_after=%ds",
+        key, verdict.rule, verdict.retry_after,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="짧은 시간에 너무 많이 조회했습니다. 잠시 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(verdict.retry_after)},
+    )
+
+
+def enforce_guest_lookup_rate_limit(request: Request) -> None:
+    """비회원 조회 IP 한도 — 접수번호 자체를 대입하는 시도를 늦춘다.
+    비밀번호 대입은 접수번호별 잠금(services/receipt.py)이 막는다."""
+    key = f"guest-lookup:{client_ip(request) or 'unknown'}"
+    verdict = rate_limit.check(key, rate_limit.guest_lookup_rules())
+    if verdict.allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="짧은 시간에 너무 많이 조회했습니다. 잠시 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(verdict.retry_after)},
+    )
+
+
 def resolve_parent_id(current: User | None) -> uuid.UUID | None:
     """민원 접수자(학부모) 식별 — **반드시 토큰에서만 온다.**
 

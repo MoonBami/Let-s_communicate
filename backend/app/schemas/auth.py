@@ -14,7 +14,7 @@ class SignupRequest(CamelModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1)
-    role: str = "teacher"  # teacher | admin (라우트에서 검증)
+    role: str = "teacher"  # teacher 만 허용 (라우트에서 검증)
 
 
 class TokenOut(CamelModel):

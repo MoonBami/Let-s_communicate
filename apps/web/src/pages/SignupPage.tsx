@@ -5,7 +5,10 @@ import { api } from '@/lib/api';
 import { getHomePath } from '@/lib/roleRoutes';
 import { useAuthStore } from '@/store/auth';
 
-// 교사·관리자 회원가입. 성공하면 바로 로그인되어 민원함으로 이동.
+// 교사 회원가입. 성공하면 바로 로그인되어 민원함으로 이동.
+// 관리자 계정은 가입으로 만들 수 없다 — 관리자는 차단 민원 증거까지 열람하므로
+// 공개 가입 화면에서 고를 수 있으면 안 된다(운영자가 생성).
+// 가입 직후엔 담당 반이 없어 민원이 보이지 않는다. 관리자가 반을 배정해야 한다.
 export function SignupPage() {
   const [form, setForm] = useState<SignupRequest>({
     email: '',
@@ -52,7 +55,7 @@ export function SignupPage() {
       <form onSubmit={onSubmit} className="w-full max-w-sm bg-white rounded-xl border p-6 space-y-4">
         <div>
           <h1 className="text-xl font-bold text-brand">회원가입</h1>
-          <p className="text-sm text-slate-500">교사·관리자 계정 만들기</p>
+          <p className="text-sm text-slate-500">교사 계정 만들기</p>
         </div>
 
         <label className="block space-y-1">
@@ -89,17 +92,10 @@ export function SignupPage() {
           />
         </label>
 
-        <label className="block space-y-1">
-          <span className="text-sm text-slate-600">역할</span>
-          <select
-            value={form.role}
-            onChange={(e) => update('role', e.target.value as SignupRequest['role'])}
-            className="w-full rounded-md border px-3 py-2 text-sm bg-white"
-          >
-            <option value="teacher">교사</option>
-            <option value="admin">관리자</option>
-          </select>
-        </label>
+        <p className="rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+          가입 후 학교 관리자가 담당 학년·반을 배정하면 그 반의 민원이 민원함에 표시됩니다.
+          관리자 계정이 필요하면 운영 담당자에게 요청해 주세요.
+        </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

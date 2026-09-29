@@ -56,6 +56,8 @@ const dateTimeFormatter = new Intl.DateTimeFormat('ko-KR', {
 // 교사 민원함 — 필터를 통과한 민원을 한눈에 분류하고 우선순위를 판단한다.
 export function TeacherInboxPage() {
   const role = useAuthStore((state) => state.user?.role);
+  // 로그인 시점의 정보라 배정 직후엔 옛값일 수 있다 — 빈 목록 안내 문구에만 쓴다.
+  const hasSchool = useAuthStore((state) => state.user?.schoolId != null);
   const [searchTerm, setSearchTerm] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -250,11 +252,19 @@ export function TeacherInboxPage() {
 
           {complaints.isSuccess && filteredItems.length === 0 && (
             <EmptyState
-              title={hasActiveFilters ? '검색 조건에 맞는 민원이 없습니다' : '배정된 민원이 없습니다'}
+              title={
+                hasActiveFilters
+                  ? '검색 조건에 맞는 민원이 없습니다'
+                  : role === 'teacher' && !hasSchool
+                    ? '아직 담당 반이 배정되지 않았습니다'
+                    : '배정된 민원이 없습니다'
+              }
               description={
                 hasActiveFilters
                   ? '검색어나 필터 조건을 변경해서 다시 확인해 보세요.'
-                  : '새로운 민원이 배정되면 이곳에서 확인할 수 있습니다.'
+                  : role === 'teacher' && !hasSchool
+                    ? '학교 관리자가 담당 학년·반을 배정하면 그 반의 민원이 이곳에 표시됩니다. 배정 후에는 다시 로그인해 주세요.'
+                    : '새로운 민원이 배정되면 이곳에서 확인할 수 있습니다.'
               }
               action={
                 hasActiveFilters ? (

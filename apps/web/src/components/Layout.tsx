@@ -3,7 +3,7 @@ import type { UserRole } from '@sotong/shared';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/auth';
 
-type NavigationIcon = 'inbox' | 'escalations' | 'dashboard' | 'file' | 'compose';
+type NavigationIcon = 'inbox' | 'escalations' | 'dashboard' | 'file' | 'compose' | 'teachers';
 
 interface NavigationItem {
   to: string;
@@ -31,6 +31,7 @@ const navigationByRole: Record<UserRole, NavigationItem[]> = {
   admin: [
     { to: '/dashboard', label: '대시보드', description: '학교 민원 통계', icon: 'dashboard' },
     { to: '/inbox', label: '전체 민원', description: '접수 현황 관리', icon: 'inbox' },
+    { to: '/teachers', label: '교사 배정', description: '담당 학년·반 지정', icon: 'teachers' },
     { to: '/escalations', label: '이관 관리', description: 'MDT 요청 확인', icon: 'escalations' },
   ],
   mdt: [
@@ -252,6 +253,13 @@ function NavIcon({ name }: { name: NavigationIcon }) {
       <>
         <path d="M5 19h4L19 9l-4-4L5 15v4Z" />
         <path d="m13.5 6.5 4 4M5 21h14" />
+      </>
+    ),
+    teachers: (
+      <>
+        <circle cx="9" cy="8" r="3.2" />
+        <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
+        <path d="M16 11.5l1.8 1.8 3.2-3.6" />
       </>
     ),
   };

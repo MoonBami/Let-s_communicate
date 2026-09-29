@@ -1,12 +1,14 @@
 ﻿import logging
+import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
     can_view_filtered,
     client_ip,
+    enforce_guest_lookup_rate_limit,
     enforce_intake_rate_limit,
     get_current_user_optional,
     load_visible_complaint,
@@ -15,19 +17,33 @@ from app.api.deps import (
 )
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
-from app.models.complaint import AnswerDraft, Complaint
-from app.models.user import User
+from app.models.complaint import AnswerDraft, Complaint, ComplaintMessage
+from app.models.user import School, User
 from app.schemas.case import SimilarCaseOut
 from app.schemas.complaint import (
     ClassificationOut,
+    ComplaintAssign,
     ComplaintCreate,
+    ComplaintCreated,
     ComplaintDetail,
     ComplaintOut,
     DraftOut,
+    GuestAnswer,
+    GuestComplaintView,
+    GuestLookupRequest,
+    MessageCreate,
+    MessageOut,
     Paginated,
     RiskOut,
 )
-from app.services import audit
+from app.services import audit, receipt
+from app.services.directory import (
+    StudentNotInSchool,
+    StudentQuery,
+    check_student_in_school,
+    find_student_in_school,
+    normalize_class_name,
+)
 from app.services.ai import (
     analyze_risk,
     classify,
@@ -37,6 +53,7 @@ from app.services.ai import (
     route_teacher,
     search_similar_cases,
 )
+from app.services.ai.routing import route_by_class
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +92,7 @@ def screening_text(title: str | None, body: str) -> str:
 
 @router.post(
     "",
-    response_model=ComplaintOut,
+    response_model=ComplaintCreated,
     status_code=status.HTTP_201_CREATED,
     # 인증이 없는 공개 엔드포인트라 유량 제한이 유일한 방어선이다.
     dependencies=[Depends(enforce_intake_rate_limit)],
@@ -100,7 +117,38 @@ def create_complaint(
     게이트를 통과하지 못한 단순 행정도 교사에게 간다 — AI 판단이 틀렸을 때
     민원이 사라지는 것보다 교사가 한 번 더 보는 편이 낫다(services/ai/gate.py).
     분류·위험 결과는 이력 테이블에 함께 남긴다.
+
+    학교·학생 확인은 AI 파이프라인보다 **먼저** 한다. 없는 학교로 들어온 요청은
+    FK 위반으로 커밋에서 터져 500 이 됐다 — 이제 404 로 거절하고, 분류·위험 분석
+    (LLM 호출)도 낭비하지 않는다.
+
+    학생은 `studentId`(직접 지정) 또는 `student`(이름·학년·반) 중 하나로 받는다.
+    이름으로 찾은 경우 **찾았는지 여부를 응답에 드러내지 않는다** — `studentId`·
+    `assignedTeacherId` 를 비워서 돌려준다. 그렇지 않으면 로그인 없이 이름을 바꿔
+    가며 넣어 보는 것만으로 특정 아이의 재학 여부를 캐낼 수 있다
+    (services/directory.py).
     """
+    if db.get(School, payload.school_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "학교를 찾을 수 없습니다.")
+
+    student_id = None
+    if payload.student_id is not None:
+        try:
+            student_id = check_student_in_school(db, payload.school_id, payload.student_id)
+        except StudentNotInSchool:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "학생을 찾을 수 없습니다.") from None
+    elif payload.student is not None:
+        student_id = find_student_in_school(
+            db,
+            payload.school_id,
+            StudentQuery(
+                name=payload.student.name,
+                grade=payload.student.grade,
+                class_name=payload.student.class_name,
+            ),
+        )
+    matched_by_lookup = payload.student is not None
+
     body = payload.body
     screened = screening_text(payload.title, body)  # 제목까지 함께 검사한다
 
@@ -114,7 +162,7 @@ def create_complaint(
     complaint = Complaint(
         school_id=payload.school_id,
         parent_id=resolve_parent_id(current),  # 본문이 아니라 토큰에서
-        student_id=payload.student_id,
+        student_id=student_id,
         channel=payload.channel,
         title=payload.title,
         body=body,
@@ -134,10 +182,23 @@ def create_complaint(
     else:
         # 게이트 미통과분 포함 → 담당 교사 자동 배정
         complaint.status = "pending_teacher"
-        complaint.assigned_teacher_id = route_teacher(db, payload.student_id)
+        complaint.assigned_teacher_id = route_teacher(db, payload.school_id, student_id)
+        if complaint.assigned_teacher_id is None and student_id is None and payload.student is not None:
+            # 명단에 없는 학생(명단 미등록·오타·동명이인) → 학부모가 적은 반의 담임에게.
+            complaint.assigned_teacher_id = route_by_class(
+                db,
+                payload.school_id,
+                payload.student.grade,
+                normalize_class_name(payload.student.class_name),
+            )
         if classification.category == "administrative":
             # 자동 응대될 수 있었으나 안전장치가 막은 건 — 임계값 조정 근거로 남긴다.
             logger.info("자동 응대 보류 → 교사 배정: %s", gate.reason)
+
+    if payload.pin is not None:
+        # 비회원 조회용 접수번호 발급. 접수번호는 이 응답에서만 알려준다.
+        complaint.receipt_code = receipt.new_receipt_code(db)
+        complaint.lookup_pin_hash = receipt.hash_pin(payload.pin)
 
     db.add(complaint)
     db.flush()  # complaint.id 확보 (자식 레코드 FK용)
@@ -176,7 +237,14 @@ def create_complaint(
 
     db.commit()
     db.refresh(complaint)
-    return complaint
+
+    out = ComplaintCreated.model_validate(complaint)
+    out.receipt_code = receipt.display_code(complaint.receipt_code) if complaint.receipt_code else None
+    if matched_by_lookup:
+        # 학생 연결 여부가 응답으로 새지 않게 한다(위 docstring). 서버에는 저장돼 있다.
+        out.student_id = None
+        out.assigned_teacher_id = None
+    return out
 
 
 @router.get("/mine", response_model=Paginated)
@@ -279,6 +347,7 @@ def get_complaint(
         detail.classification = ClassificationOut.model_validate(latest_cls)
     if latest_risk is not None:
         detail.risk_analysis = RiskOut.model_validate(latest_risk)
+    detail.messages = _messages_out(db, complaint.id)
     return detail
 
 
@@ -334,3 +403,185 @@ def list_drafts(
         .order_by(AnswerDraft.created_at.desc())
     ).scalars().all()
     return list(drafts)
+
+
+# 담당 교사를 바꿀 수 있는 상태. 이관(escalated)·종결 건은 MDT·관리자 절차가 따로 있다.
+# auto_answered 도 넣는다 — 자동 응대로 잘못 빠진 민원(예: 알레르기 문의)을 관리자가
+# 교사에게 되돌리는 유일한 경로다. 넘기면 자동 처리 표시를 지우고 교사 확인 대기로 바꾼다.
+_REASSIGNABLE = ("received", "auto_answered", "pending_teacher", "in_progress", "answered")
+
+
+@router.patch("/{complaint_id}/assignee", response_model=ComplaintOut)
+def assign_complaint(
+    complaint_id: uuid.UUID,
+    payload: ComplaintAssign,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_roles("admin")),
+):
+    """관리자가 민원의 담당 교사를 지정·변경한다.
+
+    자동 라우팅이 담당 교사를 못 찾은 민원(학생 미지정·반 담당 없음)은 이 경로가
+    아니면 **어떤 교사에게도 보이지 않는다.** 담임 교체 때 개별 건을 옮기는 데도 쓴다.
+
+    - 같은 학교의 활성 교사에게만 넘길 수 있다.
+    - 차단된 민원(F3 증거)은 넘기지 않는다 — 교사 미노출이 차단의 의미다.
+    """
+    complaint = db.get(Complaint, complaint_id)
+    if complaint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "민원을 찾을 수 없습니다.")
+    if complaint.filtered:
+        raise HTTPException(status.HTTP_409_CONFLICT, "차단된 민원은 교사에게 배정할 수 없습니다.")
+    if complaint.status not in _REASSIGNABLE:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이관·종결된 민원은 담당 교사를 바꿀 수 없습니다.")
+
+    teacher = db.get(User, payload.teacher_id)
+    if (
+        teacher is None
+        or teacher.role != "teacher"
+        or not teacher.is_active
+        or teacher.school_id != complaint.school_id
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "이 학교 소속 교사를 찾을 수 없습니다.")
+
+    previous = complaint.assigned_teacher_id
+    complaint.assigned_teacher_id = teacher.id
+    if complaint.status in ("received", "auto_answered"):
+        complaint.status = "pending_teacher"
+        complaint.is_auto_handled = False
+    db.commit()
+    db.refresh(complaint)
+
+    audit.record(
+        db,
+        user_id=current.id,
+        action=audit.REASSIGN_COMPLAINT,
+        entity_type="complaint",
+        entity_id=complaint.id,
+        ip_address=client_ip(request),
+        detail={"from": str(previous) if previous else None, "to": str(teacher.id)},
+    )
+    db.refresh(complaint)
+    return complaint
+
+
+# ---------------------------------------------------------------------------
+# 답변 — 교사(·관리자·MDT)가 학부모에게. 학부모 회신은 받지 않는다(설계 결정).
+# ---------------------------------------------------------------------------
+
+# 학부모에게 보이는 발신자 표시. 교직원 계정 이름·이메일은 내보내지 않는다.
+_SENDER_LABEL = {"teacher": "담당 선생님", "admin": "학교 관리자", "mdt": "전담 지원팀"}
+# 답변을 달 수 없는 상태. 차단 건은 학부모에게 교사 답변이 가면 안 되고(F3), 종결 건은 끝났다.
+_NO_ANSWER_STATUSES = ("filtered_blocked", "closed")
+
+
+def _message_rows(db: Session, complaint_id: uuid.UUID):
+    return db.execute(
+        select(ComplaintMessage, User)
+        .outerjoin(User, User.id == ComplaintMessage.sender_id)
+        .where(ComplaintMessage.complaint_id == complaint_id, ComplaintMessage.is_ai.is_(False))
+        .order_by(ComplaintMessage.created_at)
+    ).all()
+
+
+def _messages_out(db: Session, complaint_id: uuid.UUID) -> list[MessageOut]:
+    return [
+        MessageOut(
+            id=m.id,
+            body=m.body,
+            sender_id=m.sender_id,
+            sender_name=u.name if u else None,
+            sender_role=u.role if u else None,
+            created_at=m.created_at,
+        )
+        for m, u in _message_rows(db, complaint_id)
+    ]
+
+
+@router.post(
+    "/{complaint_id}/messages",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def send_answer(
+    complaint_id: str,
+    payload: MessageCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(staff_only),
+):
+    """학부모에게 답변을 보낸다. 보내면 상태가 '답변 완료'가 된다.
+
+    열람 권한과 같은 규칙을 쓴다(load_visible_complaint) — 교사는 본인 배정 건만.
+    여러 번 보낼 수 있다(추가 안내·정정). 학부모는 접수번호로 조회해 본다.
+    """
+    complaint = load_visible_complaint(db, complaint_id, current, request)
+    if complaint.filtered or complaint.status in _NO_ANSWER_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이 민원에는 답변을 보낼 수 없습니다.")
+
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "답변 내용을 입력해 주세요.")
+
+    if payload.draft_id is not None:
+        draft = db.get(AnswerDraft, payload.draft_id)
+        if draft is None or draft.complaint_id != complaint.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "초안을 찾을 수 없습니다.")
+        draft.is_adopted = True
+        if body != draft.draft_body.strip():
+            draft.edited_body = body
+
+    message = ComplaintMessage(complaint_id=complaint.id, sender_id=current.id, is_ai=False, body=body)
+    db.add(message)
+    complaint.status = "answered"
+    complaint.is_auto_handled = False
+    db.commit()
+    db.refresh(message)
+    return MessageOut(
+        id=message.id,
+        body=message.body,
+        sender_id=current.id,
+        sender_name=current.name,
+        sender_role=current.role,
+        created_at=message.created_at,
+    )
+
+
+@router.post(
+    "/lookup",
+    response_model=GuestComplaintView,
+    dependencies=[Depends(enforce_guest_lookup_rate_limit)],
+)
+def guest_lookup(payload: GuestLookupRequest, db: Session = Depends(get_db)):
+    """비회원 민원 조회 — 접수번호 + 숫자 4자리 비밀번호 (services/receipt.py).
+
+    틀린 접수번호와 틀린 비밀번호는 같은 404. 비밀번호를 여러 번 틀리면 잠시 429.
+    """
+    result = receipt.lookup(db, payload.receipt_code, payload.pin)
+    if result.locked_seconds:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "비밀번호를 여러 번 틀려 잠시 조회가 제한되었습니다. 잠시 후 다시 시도해 주세요.",
+            headers={"Retry-After": str(result.locked_seconds)},
+        )
+    complaint = result.complaint
+    if complaint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "접수번호 또는 비밀번호가 올바르지 않습니다.")
+
+    answers = [
+        GuestAnswer(
+            body=m.body,
+            sender_label=_SENDER_LABEL.get(u.role if u else "", "학교"),
+            created_at=m.created_at,
+        )
+        for m, u in _message_rows(db, complaint.id)
+    ]
+    return GuestComplaintView(
+        receipt_code=receipt.display_code(complaint.receipt_code),
+        title=complaint.title,
+        body=complaint.body,
+        status=complaint.status,
+        created_at=complaint.created_at,
+        updated_at=complaint.updated_at,
+        answers=answers,
+    )

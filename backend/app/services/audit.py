@@ -47,6 +47,10 @@ def _normalize_ip(value: str | None) -> tuple[str | None, str | None]:
 # action 값. schema.sql 주석의 예시(VIEW_RECORDING / EXPORT_EVIDENCE)와 같은 계열.
 VIEW_BLOCKED_COMPLAINT = "VIEW_BLOCKED_COMPLAINT"
 LIST_BLOCKED_COMPLAINTS = "LIST_BLOCKED_COMPLAINTS"
+# 누가 어느 교사에게 어떤 반·민원을 맡겼는가 — 배정이 곧 민원 열람 권한이므로 남긴다.
+ASSIGN_TEACHER = "ASSIGN_TEACHER"
+UNASSIGN_TEACHER = "UNASSIGN_TEACHER"
+REASSIGN_COMPLAINT = "REASSIGN_COMPLAINT"
 
 
 def record(

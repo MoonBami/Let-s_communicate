@@ -18,9 +18,11 @@ from app.models.case import ComplaintCase
 from app.models.user import School, Student, User
 from app.services.ai import index_case
 
-# 프론트(ParentComplaintPage)와 맞추기 위한 고정 UUID
+# 테스트·데모 문서와 맞추기 위한 고정 UUID (프론트는 이제 학교 코드로 찾는다)
 SCHOOL_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 STUDENT_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+# 학부모가 접수 화면에 입력하는 학교 코드. 실제 교육청 코드(숫자 7자리)와 겹치지 않게 문자로.
+SCHOOL_CODE = "DEMO001"
 
 DEMO_PASSWORD = "demo1234"
 
@@ -66,6 +68,10 @@ def main() -> None:
             school = School(id=SCHOOL_ID, name="소통 데모 초등학교", edu_office="데모교육청")
             db.add(school)
             created.append("school")
+        if school.code is None:
+            # 코드 컬럼이 생기기 전에 시드된 DB 도 채운다(db/migrations/20260929_school_code.sql 이후).
+            school.code = SCHOOL_CODE
+            created.append(f"school_code:{SCHOOL_CODE}")
 
         # 계정
         users: dict[str, User] = {}
@@ -128,6 +134,7 @@ def main() -> None:
         print(f"  {acc['role']:8s} {acc['email']}")
     print(f"\nSCHOOL_ID = {SCHOOL_ID}")
     print(f"STUDENT_ID = {STUDENT_ID}")
+    print(f"학교 코드 = {SCHOOL_CODE}  (학부모 접수 화면에 입력, 학생: 김학생 3학년 2반)")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,9 @@ class School(Base):
     __tablename__ = "schools"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 학부모가 입력해 학교를 찾는 공개 식별자. 대문자로 정규화해 저장한다
+    # (services/directory.normalize_school_code).
+    code: Mapped[str | None] = mapped_column(String(20), unique=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     edu_office: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

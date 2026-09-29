@@ -64,6 +64,7 @@ $$ LANGUAGE plpgsql;
 -- 학교
 CREATE TABLE schools (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code         VARCHAR(20) UNIQUE,           -- 학교 코드(학부모가 입력해 학교를 찾는 공개 식별자)
     name         VARCHAR(150) NOT NULL,
     edu_office   VARCHAR(100),                 -- 관할 교육청
     address      VARCHAR(255),
@@ -112,6 +113,8 @@ CREATE TABLE students (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_students_school ON students(school_id);
+-- 민원 접수 시 학교 안에서 이름·학년·반으로 학생을 찾는다(services/directory.py).
+CREATE INDEX idx_students_lookup ON students(school_id, grade, class_name, name);
 
 -- 보호자(학부모) - 학생 관계
 CREATE TABLE guardianships (
@@ -153,7 +156,12 @@ CREATE TABLE complaints (
     filtered        BOOLEAN NOT NULL DEFAULT FALSE,  -- F3 필터 차단 여부
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    closed_at       TIMESTAMPTZ
+    closed_at       TIMESTAMPTZ,
+    -- 비회원 조회: 접수번호 + 숫자 4자리 비밀번호(해시). 실패 누적 시 잠시 잠근다.
+    receipt_code        VARCHAR(16) UNIQUE,
+    lookup_pin_hash     VARCHAR(255),
+    lookup_fail_count   INT NOT NULL DEFAULT 0,
+    lookup_locked_until TIMESTAMPTZ
 );
 CREATE INDEX idx_complaints_teacher  ON complaints(assigned_teacher_id);
 CREATE INDEX idx_complaints_parent   ON complaints(parent_id);
