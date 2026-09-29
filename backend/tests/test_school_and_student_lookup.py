@@ -162,3 +162,58 @@ def test_학교_조회를_과다하게_하면_429_지만_접수는_막히지_않
     assert codes == [200, 200, 429]
     r = client.post("/api/complaints", json={"schoolId": SCHOOL, "body": ORDINARY})
     assert r.status_code == 201, "조회 카운터와 접수 카운터는 따로 센다"
+
+
+# --- 명단에 없는 학생 → 학부모가 적은 반의 담임 ------------------------------
+
+
+def class_teacher(db, grade=2, class_name="2", school_id=SCHOOL_ID, email="t22@test.sotong"):
+    from app.models.analysis import TeacherAssignment
+    from app.models.user import User
+
+    t = User(school_id=school_id, role="teacher", email=email, name="2-2 담임")
+    db.add(t)
+    db.flush()
+    db.add(TeacherAssignment(teacher_id=t.id, grade=grade, class_name=class_name))
+    db.commit()
+    return t
+
+
+def assigned_of(db, complaint_id):
+    from app.models.complaint import Complaint
+
+    db.expire_all()
+    return db.get(Complaint, complaint_id).assigned_teacher_id
+
+
+def test_명단에_없어도_적은_반의_담임에게_간다(client, db, school):
+    """학교가 학생 명단을 안 올려도, 반만 배정해 두면 자동 배정이 돌아야 한다."""
+    t = class_teacher(db)
+    r = lookup(client, name="명단에없는아이", grade=2, class_name="2반")
+    assert r.status_code == 201
+    assert assigned_of(db, r.json()["id"]) == t.id
+    assert stored_student(db, r.json()["id"]) is None, "학생은 여전히 연결하지 않는다"
+
+
+def test_명단_기준_배정이_적은_반보다_우선한다(client, db, student, assigned_teacher):
+    """명단에서 찾은 학생이면 그 학생의 실제 담임에게 간다."""
+    class_teacher(db, grade=3, class_name="9")
+    r = lookup(client)  # 김학생 3-2
+    assert assigned_of(db, r.json()["id"]) == assigned_teacher.id
+
+
+def test_적은_반_배정도_다른_학교로_넘어가지_않는다(client, db, school):
+    from app.models.user import School
+
+    other = School(name="다른 학교")
+    db.add(other)
+    db.commit()
+    class_teacher(db, school_id=other.id, email="other22@test.sotong")
+    r = lookup(client, name="아무개", grade=2, class_name="2")
+    assert assigned_of(db, r.json()["id"]) is None
+
+
+def test_적은_반으로_배정돼도_응답에는_드러나지_않는다(client, db, school):
+    class_teacher(db)
+    r = lookup(client, name="아무개", grade=2, class_name="2").json()
+    assert r["assignedTeacherId"] is None

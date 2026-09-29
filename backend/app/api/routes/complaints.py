@@ -35,6 +35,7 @@ from app.services.directory import (
     StudentQuery,
     check_student_in_school,
     find_student_in_school,
+    normalize_class_name,
 )
 from app.services.ai import (
     analyze_risk,
@@ -45,6 +46,7 @@ from app.services.ai import (
     route_teacher,
     search_similar_cases,
 )
+from app.services.ai.routing import route_by_class
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +176,14 @@ def create_complaint(
         # 게이트 미통과분 포함 → 담당 교사 자동 배정
         complaint.status = "pending_teacher"
         complaint.assigned_teacher_id = route_teacher(db, payload.school_id, student_id)
+        if complaint.assigned_teacher_id is None and student_id is None and payload.student is not None:
+            # 명단에 없는 학생(명단 미등록·오타·동명이인) → 학부모가 적은 반의 담임에게.
+            complaint.assigned_teacher_id = route_by_class(
+                db,
+                payload.school_id,
+                payload.student.grade,
+                normalize_class_name(payload.student.class_name),
+            )
         if classification.category == "administrative":
             # 자동 응대될 수 있었으나 안전장치가 막은 건 — 임계값 조정 근거로 남긴다.
             logger.info("자동 응대 보류 → 교사 배정: %s", gate.reason)
