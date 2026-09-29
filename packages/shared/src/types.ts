@@ -58,6 +58,8 @@ export interface CreateComplaintRequest {
   schoolId: string;
   studentId?: string;
   student?: StudentLookup;
+  /** 비회원 조회용 숫자 4자리 비밀번호. 주면 접수번호가 발급된다. */
+  pin?: string;
   channel?: ComplaintChannel;
   title?: string;
   body: string;
@@ -84,6 +86,8 @@ export interface RiskAnalysis {
 export interface ComplaintDetail extends Complaint {
   classification: Classification | null;
   riskAnalysis: RiskAnalysis | null;
+  /** 학부모에게 보낸 답변 (오래된 순) */
+  messages: ComplaintMessage[];
 }
 
 /** F4 답변 초안 */
@@ -171,6 +175,38 @@ export interface SignupRequest {
   password: string;
   name: string;
   role: Extract<UserRole, 'teacher'>;
+}
+
+/** 접수 응답. 접수번호는 이 응답에서만 받을 수 있다(다시 알려주는 경로 없음). */
+export interface ComplaintCreated extends Complaint {
+  receiptCode: string | null;
+}
+
+/** 교사·관리자·MDT 가 보낸 답변 (교직원 화면용) */
+export interface ComplaintMessage {
+  id: string;
+  body: string;
+  senderId: string | null;
+  senderName: string | null;
+  senderRole: UserRole | null;
+  createdAt: string;
+}
+
+export interface SendAnswerRequest {
+  body: string;
+  /** AI 초안을 고쳐 보냈다면 그 초안 id */
+  draftId?: string;
+}
+
+/** 비회원 조회 결과 — 본인이 쓴 내용, 상태, 받은 답변만 */
+export interface GuestComplaintView {
+  receiptCode: string;
+  title: string | null;
+  body: string;
+  status: ComplaintStatus;
+  createdAt: string;
+  updatedAt: string;
+  answers: { body: string; senderLabel: string; createdAt: string }[];
 }
 
 /** 교사 담당 반·학생 배정 */

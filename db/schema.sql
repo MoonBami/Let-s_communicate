@@ -156,7 +156,12 @@ CREATE TABLE complaints (
     filtered        BOOLEAN NOT NULL DEFAULT FALSE,  -- F3 필터 차단 여부
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    closed_at       TIMESTAMPTZ
+    closed_at       TIMESTAMPTZ,
+    -- 비회원 조회: 접수번호 + 숫자 4자리 비밀번호(해시). 실패 누적 시 잠시 잠근다.
+    receipt_code        VARCHAR(16) UNIQUE,
+    lookup_pin_hash     VARCHAR(255),
+    lookup_fail_count   INT NOT NULL DEFAULT 0,
+    lookup_locked_until TIMESTAMPTZ
 );
 CREATE INDEX idx_complaints_teacher  ON complaints(assigned_teacher_id);
 CREATE INDEX idx_complaints_parent   ON complaints(parent_id);

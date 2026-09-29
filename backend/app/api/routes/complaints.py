@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     can_view_filtered,
     client_ip,
+    enforce_guest_lookup_rate_limit,
     enforce_intake_rate_limit,
     get_current_user_optional,
     load_visible_complaint,
@@ -16,20 +17,26 @@ from app.api.deps import (
 )
 from app.db.session import get_db
 from app.models.analysis import Classification, ContentFilterLog, RiskAnalysis
-from app.models.complaint import AnswerDraft, Complaint
+from app.models.complaint import AnswerDraft, Complaint, ComplaintMessage
 from app.models.user import School, User
 from app.schemas.case import SimilarCaseOut
 from app.schemas.complaint import (
     ClassificationOut,
     ComplaintAssign,
     ComplaintCreate,
+    ComplaintCreated,
     ComplaintDetail,
     ComplaintOut,
     DraftOut,
+    GuestAnswer,
+    GuestComplaintView,
+    GuestLookupRequest,
+    MessageCreate,
+    MessageOut,
     Paginated,
     RiskOut,
 )
-from app.services import audit
+from app.services import audit, receipt
 from app.services.directory import (
     StudentNotInSchool,
     StudentQuery,
@@ -85,7 +92,7 @@ def screening_text(title: str | None, body: str) -> str:
 
 @router.post(
     "",
-    response_model=ComplaintOut,
+    response_model=ComplaintCreated,
     status_code=status.HTTP_201_CREATED,
     # 인증이 없는 공개 엔드포인트라 유량 제한이 유일한 방어선이다.
     dependencies=[Depends(enforce_intake_rate_limit)],
@@ -188,6 +195,11 @@ def create_complaint(
             # 자동 응대될 수 있었으나 안전장치가 막은 건 — 임계값 조정 근거로 남긴다.
             logger.info("자동 응대 보류 → 교사 배정: %s", gate.reason)
 
+    if payload.pin is not None:
+        # 비회원 조회용 접수번호 발급. 접수번호는 이 응답에서만 알려준다.
+        complaint.receipt_code = receipt.new_receipt_code(db)
+        complaint.lookup_pin_hash = receipt.hash_pin(payload.pin)
+
     db.add(complaint)
     db.flush()  # complaint.id 확보 (자식 레코드 FK용)
 
@@ -226,7 +238,8 @@ def create_complaint(
     db.commit()
     db.refresh(complaint)
 
-    out = ComplaintOut.model_validate(complaint)
+    out = ComplaintCreated.model_validate(complaint)
+    out.receipt_code = receipt.display_code(complaint.receipt_code) if complaint.receipt_code else None
     if matched_by_lookup:
         # 학생 연결 여부가 응답으로 새지 않게 한다(위 docstring). 서버에는 저장돼 있다.
         out.student_id = None
@@ -334,6 +347,7 @@ def get_complaint(
         detail.classification = ClassificationOut.model_validate(latest_cls)
     if latest_risk is not None:
         detail.risk_analysis = RiskOut.model_validate(latest_risk)
+    detail.messages = _messages_out(db, complaint.id)
     return detail
 
 
@@ -449,3 +463,125 @@ def assign_complaint(
     )
     db.refresh(complaint)
     return complaint
+
+
+# ---------------------------------------------------------------------------
+# 답변 — 교사(·관리자·MDT)가 학부모에게. 학부모 회신은 받지 않는다(설계 결정).
+# ---------------------------------------------------------------------------
+
+# 학부모에게 보이는 발신자 표시. 교직원 계정 이름·이메일은 내보내지 않는다.
+_SENDER_LABEL = {"teacher": "담당 선생님", "admin": "학교 관리자", "mdt": "전담 지원팀"}
+# 답변을 달 수 없는 상태. 차단 건은 학부모에게 교사 답변이 가면 안 되고(F3), 종결 건은 끝났다.
+_NO_ANSWER_STATUSES = ("filtered_blocked", "closed")
+
+
+def _message_rows(db: Session, complaint_id: uuid.UUID):
+    return db.execute(
+        select(ComplaintMessage, User)
+        .outerjoin(User, User.id == ComplaintMessage.sender_id)
+        .where(ComplaintMessage.complaint_id == complaint_id, ComplaintMessage.is_ai.is_(False))
+        .order_by(ComplaintMessage.created_at)
+    ).all()
+
+
+def _messages_out(db: Session, complaint_id: uuid.UUID) -> list[MessageOut]:
+    return [
+        MessageOut(
+            id=m.id,
+            body=m.body,
+            sender_id=m.sender_id,
+            sender_name=u.name if u else None,
+            sender_role=u.role if u else None,
+            created_at=m.created_at,
+        )
+        for m, u in _message_rows(db, complaint_id)
+    ]
+
+
+@router.post(
+    "/{complaint_id}/messages",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def send_answer(
+    complaint_id: str,
+    payload: MessageCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(staff_only),
+):
+    """학부모에게 답변을 보낸다. 보내면 상태가 '답변 완료'가 된다.
+
+    열람 권한과 같은 규칙을 쓴다(load_visible_complaint) — 교사는 본인 배정 건만.
+    여러 번 보낼 수 있다(추가 안내·정정). 학부모는 접수번호로 조회해 본다.
+    """
+    complaint = load_visible_complaint(db, complaint_id, current, request)
+    if complaint.filtered or complaint.status in _NO_ANSWER_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이 민원에는 답변을 보낼 수 없습니다.")
+
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "답변 내용을 입력해 주세요.")
+
+    if payload.draft_id is not None:
+        draft = db.get(AnswerDraft, payload.draft_id)
+        if draft is None or draft.complaint_id != complaint.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "초안을 찾을 수 없습니다.")
+        draft.is_adopted = True
+        if body != draft.draft_body.strip():
+            draft.edited_body = body
+
+    message = ComplaintMessage(complaint_id=complaint.id, sender_id=current.id, is_ai=False, body=body)
+    db.add(message)
+    complaint.status = "answered"
+    complaint.is_auto_handled = False
+    db.commit()
+    db.refresh(message)
+    return MessageOut(
+        id=message.id,
+        body=message.body,
+        sender_id=current.id,
+        sender_name=current.name,
+        sender_role=current.role,
+        created_at=message.created_at,
+    )
+
+
+@router.post(
+    "/lookup",
+    response_model=GuestComplaintView,
+    dependencies=[Depends(enforce_guest_lookup_rate_limit)],
+)
+def guest_lookup(payload: GuestLookupRequest, db: Session = Depends(get_db)):
+    """비회원 민원 조회 — 접수번호 + 숫자 4자리 비밀번호 (services/receipt.py).
+
+    틀린 접수번호와 틀린 비밀번호는 같은 404. 비밀번호를 여러 번 틀리면 잠시 429.
+    """
+    result = receipt.lookup(db, payload.receipt_code, payload.pin)
+    if result.locked_seconds:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "비밀번호를 여러 번 틀려 잠시 조회가 제한되었습니다. 잠시 후 다시 시도해 주세요.",
+            headers={"Retry-After": str(result.locked_seconds)},
+        )
+    complaint = result.complaint
+    if complaint is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "접수번호 또는 비밀번호가 올바르지 않습니다.")
+
+    answers = [
+        GuestAnswer(
+            body=m.body,
+            sender_label=_SENDER_LABEL.get(u.role if u else "", "학교"),
+            created_at=m.created_at,
+        )
+        for m, u in _message_rows(db, complaint.id)
+    ]
+    return GuestComplaintView(
+        receipt_code=receipt.display_code(complaint.receipt_code),
+        title=complaint.title,
+        body=complaint.body,
+        status=complaint.status,
+        created_at=complaint.created_at,
+        updated_at=complaint.updated_at,
+        answers=answers,
+    )

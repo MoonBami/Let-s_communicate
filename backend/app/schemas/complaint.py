@@ -41,6 +41,8 @@ class ComplaintCreate(CamelModel):
     channel: ChannelEnum = ChannelEnum.web_form
     title: str | None = None
     body: str = Field(min_length=1)
+    # 비회원 조회용 숫자 4자리 비밀번호. 주면 접수번호가 발급된다(services/receipt.py).
+    pin: str | None = Field(default=None, pattern=r"^\d{4}$")
 
     @model_validator(mode="after")
     def _one_way_to_name_student(self) -> "ComplaintCreate":
@@ -74,6 +76,51 @@ class ComplaintOut(CamelModel):
     created_at: datetime
     updated_at: datetime
     closed_at: datetime | None
+
+
+class ComplaintCreated(ComplaintOut):
+    """접수 응답. 접수번호는 **이 응답에서만** 나간다 — 다시 알려주는 경로는 없다."""
+
+    receipt_code: str | None = None  # 'ABCD-2345' (pin 을 줬을 때만)
+
+
+class MessageCreate(CamelModel):
+    body: str = Field(min_length=1, max_length=5000)
+    # AI 초안을 고쳐 보냈다면 그 초안 id — 채택 여부를 남겨 F4 품질 지표로 쓴다.
+    draft_id: uuid.UUID | None = None
+
+
+class MessageOut(CamelModel):
+    id: uuid.UUID
+    body: str
+    sender_id: uuid.UUID | None
+    sender_name: str | None = None
+    sender_role: str | None = None
+    created_at: datetime
+
+
+class GuestLookupRequest(CamelModel):
+    receipt_code: str = Field(min_length=1, max_length=20)
+    pin: str = Field(min_length=1, max_length=10)
+
+
+class GuestAnswer(CamelModel):
+    body: str
+    sender_label: str  # '담임 선생님' 등 — 교직원 계정 정보는 내보내지 않는다
+    created_at: datetime
+
+
+class GuestComplaintView(CamelModel):
+    """비회원 조회 결과. 학부모 본인이 쓴 내용과 처리 상태, 받은 답변만 담는다.
+    AI 분류·위험도·배정 교사 같은 내부 정보는 넣지 않는다."""
+
+    receipt_code: str
+    title: str | None
+    body: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    answers: list[GuestAnswer] = Field(default_factory=list)
 
 
 class Paginated(CamelModel):
@@ -117,6 +164,7 @@ class ComplaintDetail(ComplaintOut):
 
     classification: ClassificationOut | None = None
     risk_analysis: RiskOut | None = None
+    messages: list[MessageOut] = Field(default_factory=list)
 
 
 class DraftOut(CamelModel):

@@ -80,6 +80,12 @@ export function LoginPage() {
           <p className="mt-1 text-center text-xs text-slate-400">
             학부모는 로그인 없이 민원을 접수할 수 있습니다.
           </p>
+          <Link
+            to="/complaint/lookup"
+            className="mt-3 block text-center text-sm font-medium text-brand hover:underline"
+          >
+            접수한 민원 답변 확인하기
+          </Link>
         </div>
       </form>
     </div>

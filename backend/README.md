@@ -83,6 +83,7 @@ celery -A app.worker.celery_app:celery_app beat   --loglevel=info   # 주기 작
 ```bash
 psql "<postgres://... 연결 문자열>" -f ../db/migrations/20260929_school_code.sql   # Neon 은 SQL Editor 에 붙여 넣어도 된다
 DATABASE_URL="<연결 문자열>" python seed.py                          # 데모 학교에 코드 DEMO001 부여
+psql "<postgres://... 연결 문자열>" -f ../db/migrations/20260929_guest_lookup.sql   # 비회원 조회·답변 (위 파일 다음에)
 ```
 
 ## 구조
@@ -129,6 +130,8 @@ app/
 | `GET /api/schools/by-code/{code}` | 학교 코드로 학교 찾기 (공개 정보만, 분당 30회) | 공개 |
 | `POST /api/complaints` | 학부모 민원 접수 (F3→F1→F2→게이트→라우팅). 없는 학교·학생은 404 | 공개 (로그인 시 본인 귀속) |
 | `PATCH /api/complaints/{id}/assignee` | 민원 담당 교사 지정·변경 | admin |
+| `POST /api/complaints/{id}/messages` | 학부모에게 답변 보내기 (상태 → 답변 완료, 여러 번 가능) | teacher(본인 배정)·admin·mdt |
+| `POST /api/complaints/lookup` | 비회원 민원 조회 — 접수번호 + 숫자 4자리 비밀번호. 10회 틀리면 10분 잠금 | 공개 |
 | `GET /api/admin/teachers` | 이 학교 교사 + 미소속(갓 가입) 교사와 담당 반 | admin |
 | `POST /api/admin/assignments` | 교사에게 학년·반 배정 (기존 담당 해제, 진행 중 민원 이동 선택) | admin |
 | `DELETE /api/admin/assignments/{id}` | 배정 해제 | admin |

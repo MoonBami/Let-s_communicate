@@ -1,5 +1,6 @@
 # ORM 모델 배럴. 아직 커버하지 않은 테이블은 db/schema.sql 참조하여 동일 패턴으로 확장.
 from app.models.user import School, Student, User  # noqa: F401
+from app.models.complaint import ComplaintMessage  # noqa: F401
 from app.models.complaint import AnswerDraft, Complaint  # noqa: F401
 from app.models.analysis import (  # noqa: F401
     AuditLog,

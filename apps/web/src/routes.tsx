@@ -10,6 +10,7 @@ import { ComplaintDetailPage } from './pages/ComplaintDetailPage';
 import { EscalationsPage } from './pages/EscalationsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { TeacherAssignmentsPage } from './pages/TeacherAssignmentsPage';
+import { GuestLookupPage } from './pages/GuestLookupPage';
 import { ParentDashboardPage } from './pages/ParentDashboardPage';
 import { ParentComplaintDetailPage } from './pages/ParentComplaintDetailPage';
 import { RequireAuth } from './components/RequireAuth';
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
   { path: '/signup', element: <SignupPage /> },
   // 학부모 민원 접수는 로그인 여부와 무관하게 접근 가능한 진입점 (필요 시 인증 추가)
   { path: '/complaint', element: <ParentComplaintPage /> },
+  { path: '/complaint/lookup', element: <GuestLookupPage /> }, // 비회원 조회 (접수번호 + 4자리)
   {
     path: '/',
     element: (

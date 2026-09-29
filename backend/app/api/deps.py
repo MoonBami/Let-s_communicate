@@ -133,6 +133,20 @@ def enforce_school_lookup_rate_limit(
     )
 
 
+def enforce_guest_lookup_rate_limit(request: Request) -> None:
+    """비회원 조회 IP 한도 — 접수번호 자체를 대입하는 시도를 늦춘다.
+    비밀번호 대입은 접수번호별 잠금(services/receipt.py)이 막는다."""
+    key = f"guest-lookup:{client_ip(request) or 'unknown'}"
+    verdict = rate_limit.check(key, rate_limit.guest_lookup_rules())
+    if verdict.allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="짧은 시간에 너무 많이 조회했습니다. 잠시 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(verdict.retry_after)},
+    )
+
+
 def resolve_parent_id(current: User | None) -> uuid.UUID | None:
     """민원 접수자(학부모) 식별 — **반드시 토큰에서만 온다.**
 

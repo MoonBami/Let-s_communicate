@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # 확인할 뿐이므로 분당 30회면 NAT 를 공유해도 넉넉하다.
     rate_limit_school_lookup_per_minute: int = 30
 
+    # 비회원 민원 조회(접수번호 + 숫자 4자리 비밀번호, services/receipt.py).
+    # 한 접수번호에 비밀번호를 N번 틀리면 M분 잠근다. 4자리는 1만 가지뿐이라 잠금이
+    # 없으면 접수번호를 본 사람이 몇 초 만에 전부 대입한다. 0 이면 잠금을 끈다.
+    guest_lookup_max_failures: int = 10
+    guest_lookup_lock_minutes: int = 10
+    # IP 당 조회 횟수(접수번호 자체를 대입하는 시도용). 정상 학부모는 몇 번이면 충분하다.
+    rate_limit_guest_lookup_per_minute: int = 20
+
     # 프록시(로드밸런서·리버스 프록시) 뒤에 있을 때만 켠다.
     # 켜면 X-Forwarded-For 를 클라이언트 IP 로 신뢰한다 — 프록시가 없는데 켜면
     # 공격자가 헤더를 위조해 한도를 무한히 우회할 수 있으므로 기본값은 꺼둔다.

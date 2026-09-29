@@ -13,6 +13,8 @@ export const API = {
     drafts: (id: string) => `/api/complaints/${id}/drafts`, // F4 이력
     similarCases: (id: string) => `/api/complaints/${id}/similar-cases`, // F5
     assignee: (id: string) => `/api/complaints/${id}/assignee`, // 담당 교사 지정 (admin)
+    messages: (id: string) => `/api/complaints/${id}/messages`, // 교사 답변 보내기
+    lookup: '/api/complaints/lookup', // 비회원 조회 (접수번호 + 4자리 비밀번호, 공개)
   },
   schools: {
     byCode: (code: string) => `/api/schools/by-code/${encodeURIComponent(code)}`, // 공개
