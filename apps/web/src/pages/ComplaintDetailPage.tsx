@@ -158,7 +158,8 @@ export function ComplaintDetailPage() {
 
 // 관리자: 담당 교사 지정·변경. 자동 배정이 담당을 못 찾은 민원(학생 미지정, 반 담당 없음)은
 // 이 경로가 아니면 어떤 교사에게도 보이지 않는다.
-const REASSIGNABLE = new Set(['received', 'pending_teacher', 'in_progress', 'answered']);
+// auto_answered 포함 — 자동 응대로 잘못 빠진 민원을 교사에게 되돌리는 경로.
+const REASSIGNABLE = new Set(['received', 'auto_answered', 'pending_teacher', 'in_progress', 'answered']);
 
 function AssigneeSection({ complaint, onDone }: { complaint: Complaint; onDone: () => void }) {
   const queryClient = useQueryClient();

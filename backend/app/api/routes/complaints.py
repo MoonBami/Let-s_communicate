@@ -392,7 +392,9 @@ def list_drafts(
 
 
 # 담당 교사를 바꿀 수 있는 상태. 이관(escalated)·종결 건은 MDT·관리자 절차가 따로 있다.
-_REASSIGNABLE = ("received", "pending_teacher", "in_progress", "answered")
+# auto_answered 도 넣는다 — 자동 응대로 잘못 빠진 민원(예: 알레르기 문의)을 관리자가
+# 교사에게 되돌리는 유일한 경로다. 넘기면 자동 처리 표시를 지우고 교사 확인 대기로 바꾼다.
+_REASSIGNABLE = ("received", "auto_answered", "pending_teacher", "in_progress", "answered")
 
 
 @router.patch("/{complaint_id}/assignee", response_model=ComplaintOut)
@@ -430,8 +432,9 @@ def assign_complaint(
 
     previous = complaint.assigned_teacher_id
     complaint.assigned_teacher_id = teacher.id
-    if complaint.status == "received":
+    if complaint.status in ("received", "auto_answered"):
         complaint.status = "pending_teacher"
+        complaint.is_auto_handled = False
     db.commit()
     db.refresh(complaint)
 

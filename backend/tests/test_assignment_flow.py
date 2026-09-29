@@ -256,6 +256,25 @@ def test_소속_없는_교사에게는_민원을_넘길_수_없다(client, schoo
     assert res.status_code == 404, "반 배정으로 학교 소속이 확인된 교사에게만 넘긴다"
 
 
+def test_자동_응대된_민원도_교사에게_되돌릴_수_있다(client, school, users, tokens, db):
+    """자동 응대로 잘못 빠진 민원(예: 알레르기 문의)을 구제하는 경로."""
+    from app.models.complaint import Complaint
+
+    r = client.post("/api/complaints", json={"schoolId": SCHOOL, "body": ORDINARY}).json()
+    c = db.get(Complaint, uuid.UUID(r["id"]))
+    c.status, c.is_auto_handled = "auto_answered", True
+    db.commit()
+
+    res = client.patch(
+        f"/api/complaints/{r['id']}/assignee",
+        headers=tokens["admin"],
+        json={"teacherId": str(users["teacher"].id)},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "pending_teacher"
+    assert res.json()["isAutoHandled"] is False
+
+
 def test_차단된_민원은_교사에게_넘길_수_없다(client, student, users, tokens):
     r = submit(client, body=ABUSIVE).json()
     assert r["filtered"] is True
